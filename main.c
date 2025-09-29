@@ -27,8 +27,8 @@ int main() {
         printf("1. Add Contact\n");
         printf("2. Contact List\n");
         printf("3. Delete Contact\n");
-        printf("4. Search Contact (contains with strstr)\n");
-        printf("5. Update Contact (fixed)\n");
+        printf("4. Search Contact\n");
+        printf("5. Update Contact\n");
         printf("0. Exit\n\n");
         printf("Enter your choice: ");
         if (scanf("%d", &choice) != 1) choice = -1;
