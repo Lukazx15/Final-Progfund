@@ -39,6 +39,7 @@ void trimWhitespace(char *str);
 int validateEmail(const char *email);
 int validatePhone(const char *phone);
 void clearInputBuffer();
+int confirmAction(const char *message);
 
 int main() {
     int choice;
@@ -92,6 +93,19 @@ int main() {
 void clearInputBuffer() {
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
+}
+
+int confirmAction(const char *message) {
+    char response[10];
+    printf("%s (y/n): ", message);
+    if (fgets(response, sizeof(response), stdin)) {
+        response[strcspn(response, "\n")] = '\0';
+        trimWhitespace(response);
+        if (strlen(response) > 0 && (response[0] == 'y' || response[0] == 'Y')) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 void trimWhitespace(char *str) {
@@ -185,43 +199,161 @@ int validatePhone(const char *phone) {
 void addContact() {
     struct Contact c;
     char temp[MAX_FIELD_LEN * 2];
-    printf("\n--- Add New Contact ---\n");
-    printf("Enter company name: ");
-    if (!fgets(temp, sizeof(temp), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
-    temp[strcspn(temp, "\n")] = '\0';
-    sanitizeInput(temp);
-    if (strlen(temp) == 0) { printf("[ERROR] Company name cannot be empty!\n"); return; }
-    if (strlen(temp) >= MAX_FIELD_LEN) { printf("[ERROR] Company name is too long (max %d chars)!\n", MAX_FIELD_LEN - 1); return; }
-    strncpy(c.company, temp, MAX_FIELD_LEN - 1); c.company[MAX_FIELD_LEN - 1] = '\0';
+    
+    printf("\n=== Add New Contact ===\n");
+    printf("(Enter 0 at any field to cancel)\n\n");
+    
+    // Company name - loop until valid
+    while (1) {
+        printf("Enter company name: ");
+        if (!fgets(temp, sizeof(temp), stdin)) {
+            printf("[ERROR] Failed to read input!\n");
+            continue;
+        }
+        temp[strcspn(temp, "\n")] = '\0';
+        
+        // Check for exit
+        if (strcmp(temp, "0") == 0) {
+            printf("[INFO] Add contact cancelled.\n");
+            return;
+        }
+        
+        sanitizeInput(temp);
+        
+        if (strlen(temp) == 0) {
+            printf("[ERROR] Company name cannot be empty! Please try again.\n");
+            continue;
+        }
+        if (strlen(temp) >= MAX_FIELD_LEN) {
+            printf("[ERROR] Company name is too long (max %d chars)! Please try again.\n", MAX_FIELD_LEN - 1);
+            continue;
+        }
+        
+        strncpy(c.company, temp, MAX_FIELD_LEN - 1);
+        c.company[MAX_FIELD_LEN - 1] = '\0';
+        break;
+    }
 
-    printf("Enter contact person name: ");
-    if (!fgets(temp, sizeof(temp), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
-    temp[strcspn(temp, "\n")] = '\0';
-    sanitizeInput(temp);
-    if (strlen(temp) == 0) { printf("[ERROR] Person name cannot be empty!\n"); return; }
-    if (strlen(temp) >= MAX_FIELD_LEN) { printf("[ERROR] Person name is too long (max %d chars)!\n", MAX_FIELD_LEN - 1); return; }
-    strncpy(c.person, temp, MAX_FIELD_LEN - 1); c.person[MAX_FIELD_LEN - 1] = '\0';
+    // Contact person - loop until valid
+    while (1) {
+        printf("Enter contact person name: ");
+        if (!fgets(temp, sizeof(temp), stdin)) {
+            printf("[ERROR] Failed to read input!\n");
+            continue;
+        }
+        temp[strcspn(temp, "\n")] = '\0';
+        
+        // Check for exit
+        if (strcmp(temp, "0") == 0) {
+            printf("[INFO] Add contact cancelled.\n");
+            return;
+        }
+        
+        sanitizeInput(temp);
+        
+        if (strlen(temp) == 0) {
+            printf("[ERROR] Person name cannot be empty! Please try again.\n");
+            continue;
+        }
+        if (strlen(temp) >= MAX_FIELD_LEN) {
+            printf("[ERROR] Person name is too long (max %d chars)! Please try again.\n", MAX_FIELD_LEN - 1);
+            continue;
+        }
+        
+        strncpy(c.person, temp, MAX_FIELD_LEN - 1);
+        c.person[MAX_FIELD_LEN - 1] = '\0';
+        break;
+    }
 
-    printf("Enter phone number: ");
-    if (!fgets(temp, sizeof(temp), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
-    temp[strcspn(temp, "\n")] = '\0';
-    sanitizeInput(temp);
-    if (strlen(temp) == 0) { printf("[ERROR] Phone number cannot be empty!\n"); return; }
-    if (!validatePhone(temp)) { printf("[ERROR] Invalid phone number format!\n"); return; }
-    if (strlen(temp) >= MAX_FIELD_LEN) { printf("[ERROR] Phone number is too long (max %d chars)!\n", MAX_FIELD_LEN - 1); return; }
-    strncpy(c.phone, temp, MAX_FIELD_LEN - 1); c.phone[MAX_FIELD_LEN - 1] = '\0';
+    // Phone - loop until valid
+    while (1) {
+        printf("Enter phone number: ");
+        if (!fgets(temp, sizeof(temp), stdin)) {
+            printf("[ERROR] Failed to read input!\n");
+            continue;
+        }
+        temp[strcspn(temp, "\n")] = '\0';
+        
+        // Check for exit
+        if (strcmp(temp, "0") == 0) {
+            printf("[INFO] Add contact cancelled.\n");
+            return;
+        }
+        
+        sanitizeInput(temp);
+        
+        if (strlen(temp) == 0) {
+            printf("[ERROR] Phone number cannot be empty! Please try again.\n");
+            continue;
+        }
+        if (!validatePhone(temp)) {
+            printf("[ERROR] Invalid phone number format! Please try again.\n");
+            continue;
+        }
+        if (strlen(temp) >= MAX_FIELD_LEN) {
+            printf("[ERROR] Phone number is too long (max %d chars)! Please try again.\n", MAX_FIELD_LEN - 1);
+            continue;
+        }
+        
+        strncpy(c.phone, temp, MAX_FIELD_LEN - 1);
+        c.phone[MAX_FIELD_LEN - 1] = '\0';
+        break;
+    }
 
-    printf("Enter email: ");
-    if (!fgets(temp, sizeof(temp), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
-    temp[strcspn(temp, "\n")] = '\0';
-    sanitizeInput(temp);
-    if (strlen(temp) == 0) { printf("[ERROR] Email cannot be empty!\n"); return; }
-    if (!validateEmail(temp)) { printf("[ERROR] Invalid email format!\n"); return; }
-    if (strlen(temp) >= MAX_FIELD_LEN) { printf("[ERROR] Email is too long (max %d chars)!\n", MAX_FIELD_LEN - 1); return; }
-    strncpy(c.email, temp, MAX_FIELD_LEN - 1); c.email[MAX_FIELD_LEN - 1] = '\0';
+    // Email - loop until valid
+    while (1) {
+        printf("Enter email: ");
+        if (!fgets(temp, sizeof(temp), stdin)) {
+            printf("[ERROR] Failed to read input!\n");
+            continue;
+        }
+        temp[strcspn(temp, "\n")] = '\0';
+        
+        // Check for exit
+        if (strcmp(temp, "0") == 0) {
+            printf("[INFO] Add contact cancelled.\n");
+            return;
+        }
+        
+        sanitizeInput(temp);
+        
+        if (strlen(temp) == 0) {
+            printf("[ERROR] Email cannot be empty! Please try again.\n");
+            continue;
+        }
+        if (!validateEmail(temp)) {
+            printf("[ERROR] Invalid email format! Please try again.\n");
+            continue;
+        }
+        if (strlen(temp) >= MAX_FIELD_LEN) {
+            printf("[ERROR] Email is too long (max %d chars)! Please try again.\n", MAX_FIELD_LEN - 1);
+            continue;
+        }
+        
+        strncpy(c.email, temp, MAX_FIELD_LEN - 1);
+        c.email[MAX_FIELD_LEN - 1] = '\0';
+        break;
+    }
 
+    // Show summary and confirm
+    printf("\n--- Contact Summary ---\n");
+    printf("Company : %s\n", c.company);
+    printf("Contact : %s\n", c.person);
+    printf("Phone   : %s\n", c.phone);
+    printf("Email   : %s\n", c.email);
+    printf("----------------------\n");
+    
+    if (!confirmAction("\nDo you want to save this contact?")) {
+        printf("[INFO] Contact not saved.\n");
+        return;
+    }
+
+    // Save to file
     FILE *fp = fopen("contacts.csv", "a");
-    if (!fp) { printf("[ERROR] Cannot open file for writing!\n"); return; }
+    if (!fp) {
+        printf("[ERROR] Cannot open file for writing!\n");
+        return;
+    }
 
     char esc_company[MAX_FIELD_LEN * 2];
     char esc_person[MAX_FIELD_LEN * 2];
@@ -240,14 +372,26 @@ void addContact() {
 
 void listContacts() {
     char filter[MAX_FIELD_LEN];
-    printf("\n--- Contact List ---\n");
-    printf("Enter keyword to search company (or press Enter to show all): ");
-    if (!fgets(filter, sizeof(filter), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
+    printf("\n=== Contact List ===\n");
+    printf("Enter keyword to search company (or press Enter to show all, 0 to cancel): ");
+    if (!fgets(filter, sizeof(filter), stdin)) {
+        printf("[ERROR] Failed to read input!\n");
+        return;
+    }
     filter[strcspn(filter, "\n")] = '\0';
     trimWhitespace(filter);
+    
+    // Check for exit
+    if (strcmp(filter, "0") == 0) {
+        printf("[INFO] List contacts cancelled.\n");
+        return;
+    }
 
     FILE *fp = fopen("contacts.csv", "r");
-    if (!fp) { printf("[INFO] No contacts file found or cannot open.\n"); return; }
+    if (!fp) {
+        printf("[INFO] No contacts file found or cannot open.\n");
+        return;
+    }
 
     char line[MAX_LINE_LEN];
     int count = 0;
@@ -321,21 +465,42 @@ void listContacts() {
 
 void deleteContact() {
     char key[MAX_FIELD_LEN];
-    printf("\n--- Delete Contact ---\n");
-    printf("Enter company name to delete: ");
-    if (!fgets(key, sizeof(key), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
+    printf("\n=== Delete Contact ===\n");
+    printf("Enter company name to delete (or 0 to cancel): ");
+    if (!fgets(key, sizeof(key), stdin)) {
+        printf("[ERROR] Failed to read input!\n");
+        return;
+    }
     key[strcspn(key, "\n")] = '\0';
     trimWhitespace(key);
-    if (strlen(key) == 0) { printf("[ERROR] Company name cannot be empty!\n"); return; }
+    
+    // Check for exit
+    if (strcmp(key, "0") == 0) {
+        printf("[INFO] Delete cancelled.\n");
+        return;
+    }
+    
+    if (strlen(key) == 0) {
+        printf("[ERROR] Company name cannot be empty!\n");
+        return;
+    }
 
     FILE *rf = fopen("contacts.csv", "r");
-    if (!rf) { printf("[ERROR] No contacts file found!\n"); return; }
+    if (!rf) {
+        printf("[ERROR] No contacts file found!\n");
+        return;
+    }
 
     FILE *wf = fopen("contacts.tmp", "w");
-    if (!wf) { fclose(rf); printf("[ERROR] Cannot create temporary file!\n"); return; }
+    if (!wf) {
+        fclose(rf);
+        printf("[ERROR] Cannot create temporary file!\n");
+        return;
+    }
 
     char line[MAX_LINE_LEN];
     int deleted = 0;
+    int found = 0;
 
     while (fgets(line, sizeof(line), rf)) {
         line[strcspn(line, "\n\r")] = '\0';
@@ -359,6 +524,21 @@ void deleteContact() {
         unescapeCSV(company);
 
         if (!deleted && strlen(company) > 0 && strcmp(company, key) == 0) {
+            found = 1;
+            printf("\n[FOUND] Company: %s\n", company);
+            
+            fclose(rf);
+            fclose(wf);
+            remove("contacts.tmp");
+            
+            if (!confirmAction("Are you sure you want to delete this contact?")) {
+                printf("[INFO] Delete cancelled.\n");
+                return;
+            }
+            
+            // Reopen and redo
+            rf = fopen("contacts.csv", "r");
+            wf = fopen("contacts.tmp", "w");
             deleted = 1;
             continue;
         }
@@ -368,24 +548,50 @@ void deleteContact() {
     fclose(rf);
     fclose(wf);
 
-    if (remove("contacts.csv") != 0) { printf("[ERROR] Failed to remove old file!\n"); remove("contacts.tmp"); return; }
-    if (rename("contacts.tmp", "contacts.csv") != 0) { printf("[ERROR] Failed to rename temporary file!\n"); return; }
-
-    if (deleted) printf("\n[SUCCESS] Contact deleted successfully!\n");
-    else printf("\n[INFO] Company '%s' not found.\n", key);
+    if (deleted) {
+        if (remove("contacts.csv") != 0) {
+            printf("[ERROR] Failed to remove old file!\n");
+            remove("contacts.tmp");
+            return;
+        }
+        if (rename("contacts.tmp", "contacts.csv") != 0) {
+            printf("[ERROR] Failed to rename temporary file!\n");
+            return;
+        }
+        printf("\n[SUCCESS] Contact deleted successfully!\n");
+    } else {
+        remove("contacts.tmp");
+        printf("\n[INFO] Company '%s' not found.\n", key);
+    }
 }
 
 void searchContact() {
     char key[MAX_FIELD_LEN];
-    printf("\n--- Search Contact ---\n");
-    printf("Enter keyword (company or person name): ");
-    if (!fgets(key, sizeof(key), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
+    printf("\n=== Search Contact ===\n");
+    printf("Enter keyword (company or person name, or 0 to cancel): ");
+    if (!fgets(key, sizeof(key), stdin)) {
+        printf("[ERROR] Failed to read input!\n");
+        return;
+    }
     key[strcspn(key, "\n")] = '\0';
     trimWhitespace(key);
-    if (strlen(key) == 0) { printf("[ERROR] Search keyword cannot be empty!\n"); return; }
+    
+    // Check for exit
+    if (strcmp(key, "0") == 0) {
+        printf("[INFO] Search cancelled.\n");
+        return;
+    }
+    
+    if (strlen(key) == 0) {
+        printf("[ERROR] Search keyword cannot be empty!\n");
+        return;
+    }
 
     FILE *fp = fopen("contacts.csv", "r");
-    if (!fp) { printf("[ERROR] No contacts file found!\n"); return; }
+    if (!fp) {
+        printf("[ERROR] No contacts file found!\n");
+        return;
+    }
 
     char line[MAX_LINE_LEN];
     int found = 0;
@@ -440,18 +646,38 @@ void searchContact() {
 
 void updateContact() {
     char key[MAX_FIELD_LEN];
-    printf("\n--- Update Contact ---\n");
-    printf("Enter company name to update: ");
-    if (!fgets(key, sizeof(key), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
+    printf("\n=== Update Contact ===\n");
+    printf("Enter company name to update (or 0 to cancel): ");
+    if (!fgets(key, sizeof(key), stdin)) {
+        printf("[ERROR] Failed to read input!\n");
+        return;
+    }
     key[strcspn(key, "\n")] = '\0';
     trimWhitespace(key);
-    if (strlen(key) == 0) { printf("[ERROR] Company name cannot be empty!\n"); return; }
+    
+    // Check for exit
+    if (strcmp(key, "0") == 0) {
+        printf("[INFO] Update cancelled.\n");
+        return;
+    }
+    
+    if (strlen(key) == 0) {
+        printf("[ERROR] Company name cannot be empty!\n");
+        return;
+    }
 
     FILE *rf = fopen("contacts.csv", "r");
-    if (!rf) { printf("[ERROR] No contacts file found!\n"); return; }
+    if (!rf) {
+        printf("[ERROR] No contacts file found!\n");
+        return;
+    }
 
     FILE *wf = fopen("contacts.tmp", "w");
-    if (!wf) { fclose(rf); printf("[ERROR] Cannot create temporary file!\n"); return; }
+    if (!wf) {
+        fclose(rf);
+        printf("[ERROR] Cannot create temporary file!\n");
+        return;
+    }
 
     char line[MAX_LINE_LEN];
     int updated = 0;
@@ -490,72 +716,130 @@ void updateContact() {
         if (!updated && strlen(company) > 0 && strcmp(company, key) == 0) {
             int choice;
             char buf[MAX_FIELD_LEN];
-            printf("\nFound contact:\n");
+            
+            printf("\n--- Current Contact ---\n");
             printf("Company : %s\n", company);
             printf("Contact : %s\n", person);
             printf("Phone   : %s\n", phone);
             printf("Email   : %s\n", email);
+            printf("----------------------\n");
+            
             printf("\nUpdate which field?\n");
             printf("1. Company\n");
             printf("2. Contact Person\n");
             printf("3. Phone\n");
             printf("4. Email\n");
+            printf("0. Cancel\n");
             printf("Choice: ");
+            
             if (scanf("%d", &choice) != 1) choice = 0;
             clearInputBuffer();
+            
+            if (choice == 0) {
+                printf("[INFO] Update cancelled.\n");
+                fprintf(wf, "%s\n", line);
+                continue;
+            }
 
-            int valid_update = 1;
+            int valid_update = 0;
+            char new_company[MAX_FIELD_LEN], new_person[MAX_FIELD_LEN];
+            char new_phone[MAX_FIELD_LEN], new_email[MAX_FIELD_LEN];
+            
+            strcpy(new_company, company);
+            strcpy(new_person, person);
+            strcpy(new_phone, phone);
+            strcpy(new_email, email);
+            
             switch (choice) {
                 case 1:
-                    printf("New Company: ");
-                    if (fgets(buf, sizeof(buf), stdin)) {
-                        buf[strcspn(buf, "\n")] = '\0';
-                        sanitizeInput(buf);
-                        if (strlen(buf) > 0 && strlen(buf) < MAX_FIELD_LEN) {
-                            strncpy(company, buf, MAX_FIELD_LEN - 1);
-                            company[MAX_FIELD_LEN - 1] = '\0';
-                        } else valid_update = 0;
+                    while (1) {
+                        printf("New Company (0 to cancel): ");
+                        if (fgets(buf, sizeof(buf), stdin)) {
+                            buf[strcspn(buf, "\n")] = '\0';
+                            if (strcmp(buf, "0") == 0) break;
+                            sanitizeInput(buf);
+                            if (strlen(buf) > 0 && strlen(buf) < MAX_FIELD_LEN) {
+                                strcpy(new_company, buf);
+                                valid_update = 1;
+                                break;
+                            }
+                            printf("[ERROR] Invalid input! Try again.\n");
+                        }
                     }
                     break;
                 case 2:
-                    printf("New Contact: ");
-                    if (fgets(buf, sizeof(buf), stdin)) {
-                        buf[strcspn(buf, "\n")] = '\0';
-                        sanitizeInput(buf);
-                        if (strlen(buf) > 0 && strlen(buf) < MAX_FIELD_LEN) {
-                            strncpy(person, buf, MAX_FIELD_LEN - 1);
-                            person[MAX_FIELD_LEN - 1] = '\0';
-                        } else valid_update = 0;
+                    while (1) {
+                        printf("New Contact (0 to cancel): ");
+                        if (fgets(buf, sizeof(buf), stdin)) {
+                            buf[strcspn(buf, "\n")] = '\0';
+                            if (strcmp(buf, "0") == 0) break;
+                            sanitizeInput(buf);
+                            if (strlen(buf) > 0 && strlen(buf) < MAX_FIELD_LEN) {
+                                strcpy(new_person, buf);
+                                valid_update = 1;
+                                break;
+                            }
+                            printf("[ERROR] Invalid input! Try again.\n");
+                        }
                     }
                     break;
                 case 3:
-                    printf("New Phone: ");
-                    if (fgets(buf, sizeof(buf), stdin)) {
-                        buf[strcspn(buf, "\n")] = '\0';
-                        sanitizeInput(buf);
-                        if (validatePhone(buf) && strlen(buf) > 0 && strlen(buf) < MAX_FIELD_LEN) {
-                            strncpy(phone, buf, MAX_FIELD_LEN - 1);
-                            phone[MAX_FIELD_LEN - 1] = '\0';
-                        } else { printf("[ERROR] Invalid phone format!\n"); valid_update = 0; }
+                    while (1) {
+                        printf("New Phone (0 to cancel): ");
+                        if (fgets(buf, sizeof(buf), stdin)) {
+                            buf[strcspn(buf, "\n")] = '\0';
+                            if (strcmp(buf, "0") == 0) break;
+                            sanitizeInput(buf);
+                            if (validatePhone(buf) && strlen(buf) > 0 && strlen(buf) < MAX_FIELD_LEN) {
+                                strcpy(new_phone, buf);
+                                valid_update = 1;
+                                break;
+                            }
+                            printf("[ERROR] Invalid phone format! Try again.\n");
+                        }
                     }
                     break;
                 case 4:
-                    printf("New Email: ");
-                    if (fgets(buf, sizeof(buf), stdin)) {
-                        buf[strcspn(buf, "\n")] = '\0';
-                        sanitizeInput(buf);
-                        if (validateEmail(buf) && strlen(buf) > 0 && strlen(buf) < MAX_FIELD_LEN) {
-                            strncpy(email, buf, MAX_FIELD_LEN - 1);
-                            email[MAX_FIELD_LEN - 1] = '\0';
-                        } else { printf("[ERROR] Invalid email format!\n"); valid_update = 0; }
+                    while (1) {
+                        printf("New Email (0 to cancel): ");
+                        if (fgets(buf, sizeof(buf), stdin)) {
+                            buf[strcspn(buf, "\n")] = '\0';
+                            if (strcmp(buf, "0") == 0) break;
+                            sanitizeInput(buf);
+                            if (validateEmail(buf) && strlen(buf) > 0 && strlen(buf) < MAX_FIELD_LEN) {
+                                strcpy(new_email, buf);
+                                valid_update = 1;
+                                break;
+                            }
+                            printf("[ERROR] Invalid email format! Try again.\n");
+                        }
                     }
                     break;
                 default:
                     printf("[INFO] Update cancelled.\n");
-                    valid_update = 0;
                     break;
             }
-            if (valid_update) updated = 1;
+            
+            if (valid_update) {
+                // Show new data preview
+                printf("\n--- Updated Contact Preview ---\n");
+                printf("Company : %s\n", new_company);
+                printf("Contact : %s\n", new_person);
+                printf("Phone   : %s\n", new_phone);
+                printf("Email   : %s\n", new_email);
+                printf("-------------------------------\n");
+                
+                if (confirmAction("\nDo you want to save these changes?")) {
+                    strcpy(company, new_company);
+                    strcpy(person, new_person);
+                    strcpy(phone, new_phone);
+                    strcpy(email, new_email);
+                    updated = 1;
+                    printf("[SUCCESS] Changes will be saved.\n");
+                } else {
+                    printf("[INFO] Changes discarded.\n");
+                }
+            }
         }
 
         char esc_company[MAX_FIELD_LEN * 2];
@@ -574,9 +858,19 @@ void updateContact() {
     fclose(rf);
     fclose(wf);
 
-    if (remove("contacts.csv") != 0) { printf("[ERROR] Failed to remove old file!\n"); remove("contacts.tmp"); return; }
-    if (rename("contacts.tmp", "contacts.csv") != 0) { printf("[ERROR] Failed to rename temporary file!\n"); return; }
+    if (remove("contacts.csv") != 0) {
+        printf("[ERROR] Failed to remove old file!\n");
+        remove("contacts.tmp");
+        return;
+    }
+    if (rename("contacts.tmp", "contacts.csv") != 0) {
+        printf("[ERROR] Failed to rename temporary file!\n");
+        return;
+    }
 
-    if (updated) printf("\n[SUCCESS] Contact updated successfully!\n");
-    else printf("\n[INFO] No matching record to update.\n");
+    if (updated) {
+        printf("\n[SUCCESS] Contact updated successfully!\n");
+    } else {
+        printf("\n[INFO] No changes made.\n");
+    }
 }
