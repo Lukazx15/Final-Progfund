@@ -485,9 +485,84 @@ void deleteContact() {
         return;
     }
 
+    // First pass - find and show the contact
     FILE *rf = fopen("contacts.csv", "r");
     if (!rf) {
         printf("[ERROR] No contacts file found!\n");
+        return;
+    }
+
+    char line[MAX_LINE_LEN];
+    int found = 0;
+    char found_company[MAX_FIELD_LEN] = "";
+    char found_person[MAX_FIELD_LEN] = "";
+    char found_phone[MAX_FIELD_LEN] = "";
+    char found_email[MAX_FIELD_LEN] = "";
+
+    while (fgets(line, sizeof(line), rf)) {
+        line[strcspn(line, "\n\r")] = '\0';
+        if (strlen(line) == 0) continue;
+
+        char linecpy[MAX_LINE_LEN];
+        strncpy(linecpy, line, sizeof(linecpy) - 1);
+        linecpy[sizeof(linecpy) - 1] = '\0';
+
+        char company[MAX_FIELD_LEN] = "";
+        char person[MAX_FIELD_LEN] = "";
+        char phone[MAX_FIELD_LEN] = "";
+        char email[MAX_FIELD_LEN] = "";
+
+        char *fields[4] = {company, person, phone, email};
+        int field_idx = 0;
+        int in_quotes = 0;
+        char *src = linecpy;
+        char *dst = fields[0];
+
+        while (*src && field_idx < 4) {
+            if (*src == '"') { in_quotes = !in_quotes; src++; }
+            else if (*src == ',' && !in_quotes) { *dst = '\0'; field_idx++; if (field_idx < 4) dst = fields[field_idx]; src++; }
+            else { *dst++ = *src++; }
+        }
+        *dst = '\0';
+
+        unescapeCSV(company);
+        unescapeCSV(person);
+        unescapeCSV(phone);
+        unescapeCSV(email);
+
+        if (strlen(company) > 0 && strcmp(company, key) == 0) {
+            found = 1;
+            strcpy(found_company, company);
+            strcpy(found_person, person);
+            strcpy(found_phone, phone);
+            strcpy(found_email, email);
+            break;
+        }
+    }
+    fclose(rf);
+
+    if (!found) {
+        printf("\n[INFO] Company '%s' not found.\n", key);
+        return;
+    }
+
+    // Show found contact
+    printf("\n--- Contact to Delete ---\n");
+    printf("Company : %s\n", found_company);
+    printf("Contact : %s\n", found_person);
+    printf("Phone   : %s\n", found_phone);
+    printf("Email   : %s\n", found_email);
+    printf("------------------------\n");
+    
+    if (!confirmAction("\nAre you sure you want to delete this contact?")) {
+        printf("[INFO] Delete cancelled.\n");
+        return;
+    }
+
+    // Second pass - delete the contact
+    rf = fopen("contacts.csv", "r");
+    if (!rf) {
+        printf("[ERROR] Cannot open contacts file!\n");
         return;
     }
 
@@ -498,10 +573,7 @@ void deleteContact() {
         return;
     }
 
-    char line[MAX_LINE_LEN];
     int deleted = 0;
-    int found = 0;
-
     while (fgets(line, sizeof(line), rf)) {
         line[strcspn(line, "\n\r")] = '\0';
         if (strlen(line) == 0) continue;
@@ -523,46 +595,31 @@ void deleteContact() {
 
         unescapeCSV(company);
 
+        // Skip the line to delete
         if (!deleted && strlen(company) > 0 && strcmp(company, key) == 0) {
-            found = 1;
-            printf("\n[FOUND] Company: %s\n", company);
-            
-            fclose(rf);
-            fclose(wf);
-            remove("contacts.tmp");
-            
-            if (!confirmAction("Are you sure you want to delete this contact?")) {
-                printf("[INFO] Delete cancelled.\n");
-                return;
-            }
-            
-            // Reopen and redo
-            rf = fopen("contacts.csv", "r");
-            wf = fopen("contacts.tmp", "w");
             deleted = 1;
             continue;
         }
+        
         fprintf(wf, "%s\n", line);
     }
 
     fclose(rf);
     fclose(wf);
 
-    if (deleted) {
-        if (remove("contacts.csv") != 0) {
-            printf("[ERROR] Failed to remove old file!\n");
-            remove("contacts.tmp");
-            return;
-        }
-        if (rename("contacts.tmp", "contacts.csv") != 0) {
-            printf("[ERROR] Failed to rename temporary file!\n");
-            return;
-        }
-        printf("\n[SUCCESS] Contact deleted successfully!\n");
-    } else {
+    // Replace original file with temp file
+    if (remove("contacts.csv") != 0) {
+        printf("[ERROR] Failed to remove old file!\n");
         remove("contacts.tmp");
-        printf("\n[INFO] Company '%s' not found.\n", key);
+        return;
     }
+    
+    if (rename("contacts.tmp", "contacts.csv") != 0) {
+        printf("[ERROR] Failed to rename temporary file!\n");
+        return;
+    }
+
+    printf("\n[SUCCESS] Contact deleted successfully!\n");
 }
 
 void searchContact() {
