@@ -1,5 +1,3 @@
-// main.c - Business Contact Management (CSV-safe, delete supports company/person/phone/email, richer tests)
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +40,19 @@ struct Contact {
     char email  [MAX_FIELD_LEN];
 };
 
+// ==== File path switcher (so E2E doesn't touch real data) ====
+static char g_contacts_file[256] = "contacts.csv";
+const char* getContactsFile() { return g_contacts_file; }
+void setContactsFile(const char* path) {
+    if (path && *path) {
+        strncpy(g_contacts_file, path, sizeof(g_contacts_file)-1);
+        g_contacts_file[sizeof(g_contacts_file)-1] = '\0';
+    }
+}
+static void makeTempPath(char *buf, size_t n) {
+    snprintf(buf, n, "%s.tmp", getContactsFile());
+}
+
 // ==== Declarations ====
 void addContact();
 void listContacts();
@@ -60,15 +71,18 @@ void unescapeCSV(char *str);
 int  validateEmail(const char *email);
 int  validatePhone(const char *phone);
 
-
+// small CSV parser for 4 fields handling quotes
+static void parseCsv4(const char *srcLine,
+                      char *f1, size_t n1,
+                      char *f2, size_t n2,
+                      char *f3, size_t n3,
+                      char *f4, size_t n4);
 
 // helpers for tests
-static int addContactTestHelper(const char *company, const char *person, const char *phone, const char *email);
-static int countContactsTest(const char *filename);
+static void normalizePhone(const char *in, char *out, size_t out_size);
 static int contactExistsByCompanyCI(const char *filename, const char *company);
-static int contactExistsByPhoneNorm(const char *filename, const char *phone_raw);
-static int contactExistsByEmailCI(const char *filename, const char *email_raw);
-static int deleteContactTestHelper(const char *company);
+static int contactExistsByPhoneNorm  (const char *filename, const char *phone_raw);
+static int contactExistsByEmailCI    (const char *filename, const char *email_raw);
 
 // ==== Globals for tests ====
 static int test_passed = 0, test_failed = 0;
@@ -88,7 +102,7 @@ int main() {
         printf("4. Search Contact\n");
         printf("5. Update Contact\n");
         printf("6. Run Unit Tests\n");
-        printf("7. Run E2E Tests\n");
+        printf("7. Run E2E Tests (safe sandbox)\n");
         printf("0. Exit\n");
         printf("===========================================\n");
         printf("Enter your choice: ");
@@ -141,7 +155,7 @@ void trimWhitespace(char *str) {
     str[len] = '\0';
 }
 
-// trim-only (keep symbols)
+// trim-only (keep symbols). This keeps leading '=', '+', etc.
 void sanitizeInput(char *str) {
     if (!str) return;
     size_t len = strlen(str);
@@ -200,56 +214,6 @@ int validatePhone(const char *phone) {
     return has_digit;
 }
 
-// NEW: robust CSV parser for 4 fields (supports quoted fields & embedded quotes)
-static void parseCsv4(const char *line_in,
-                      char *f0, size_t s0,
-                      char *f1, size_t s1,
-                      char *f2, size_t s2,
-                      char *f3, size_t s3)
-{
-    char *outs[4]   = { f0, f1, f2, f3 };
-    size_t outsz[4] = { s0, s1, s2, s3 };
-    for (int i = 0; i < 4; i++) {
-        if (outs[i] && outsz[i]) outs[i][0] = '\0';
-    }
-
-    int idx = 0;       // field index 0..3
-    int inq = 0;       // inside quotes?
-    const char *src = line_in;
-    size_t w = 0;      // write cursor for current field
-
-    while (*src && idx < 4) {
-        char c = *src++;
-        if (c == '"') {
-            if (inq) {
-                if (*src == '"') { // embedded quote
-                    if (w + 1 < outsz[idx]) outs[idx][w++] = '"';
-                    src++;
-                } else {
-                    inq = 0; // closing quote
-                }
-            } else {
-                if (w == 0) inq = 1;       // opening quote
-                else { // stray quote, treat literal
-                    if (w + 1 < outsz[idx]) outs[idx][w++] = '"';
-                }
-            }
-        } else if (c == ',' && !inq) {
-            if (outs[idx]) outs[idx][ (w < outsz[idx]) ? w : (outsz[idx]-1) ] = '\0';
-            idx++; w = 0;
-        } else {
-            if (w + 1 < outsz[idx]) outs[idx][w++] = c;
-        }
-    }
-    if (idx < 4 && outs[idx]) {
-        outs[idx][ (w < outsz[idx]) ? w : (outsz[idx]-1) ] = '\0';
-        idx++;
-    }
-    for (; idx < 4; idx++) {
-        if (outs[idx] && outsz[idx]) outs[idx][0] = '\0';
-    }
-}
-
 // helper: digits-only normalization for phone matching
 static void normalizePhone(const char *in, char *out, size_t out_size) {
     if (!in || !out || out_size == 0) return;
@@ -258,6 +222,39 @@ static void normalizePhone(const char *in, char *out, size_t out_size) {
         if (isdigit((unsigned char)in[i])) out[j++] = in[i];
     }
     out[j] = '\0';
+}
+
+// Parse CSV line into 4 fields with quotes support
+static void parseCsv4(const char *srcLine,
+                      char *f1, size_t n1,
+                      char *f2, size_t n2,
+                      char *f3, size_t n3,
+                      char *f4, size_t n4) {
+    f1[0]=f2[0]=f3[0]=f4[0]='\0';
+    const char *src = srcLine;
+    char *dsts[4] = { f1, f2, f3, f4 };
+    size_t caps[4] = { n1, n2, n3, n4 };
+    int idx = 0, inq = 0;
+    while (*src && idx < 4) {
+        if (*src == '"') { inq = !inq; src++; }
+        else if (*src == ',' && !inq) {
+            // terminate this field
+            if (caps[idx] > 0) dsts[idx][ (caps[idx]-1) < strlen(dsts[idx]) ? (caps[idx]-1) : strlen(dsts[idx]) ] = '\0';
+            idx++;
+            if (idx >= 4) break;
+            dsts[idx][0] = '\0';
+            src++;
+        } else {
+            size_t cur_len = strlen(dsts[idx]);
+            if (cur_len + 2 < caps[idx]) {
+                dsts[idx][cur_len] = *src;
+                dsts[idx][cur_len+1] = '\0';
+            }
+            src++;
+        }
+    }
+    // unescape quotes in each
+    unescapeCSV(f1); unescapeCSV(f2); unescapeCSV(f3); unescapeCSV(f4);
 }
 
 // ==== Add Contact ====
@@ -331,7 +328,7 @@ void addContact() {
     }
 
     // Save
-    FILE *fp = fopen("contacts.csv", "a");
+    FILE *fp = fopen(getContactsFile(), "a");
     if (!fp) { printf("[ERROR] Cannot open file for writing!\n"); return; }
 
     char esc_company[MAX_FIELD_LEN * 2], esc_person [MAX_FIELD_LEN * 2];
@@ -357,7 +354,7 @@ void listContacts() {
     trimWhitespace(filter);
     if (strcmp(filter, "0") == 0) { printf("[INFO] List contacts cancelled.\n"); return; }
 
-    FILE *fp = fopen("contacts.csv", "r");
+    FILE *fp = fopen(getContactsFile(), "r");
     if (!fp) { printf("[INFO] No contacts file found or cannot open.\n"); return; }
 
     int use_filter = (int)(strlen(filter) > 0);
@@ -378,14 +375,9 @@ void listContacts() {
         line[strcspn(line, "\n\r")] = '\0';
         if (!*line) continue;
 
-        char linecpy[MAX_LINE_LEN];
-        strncpy(linecpy, line, sizeof(linecpy)-1);
-        linecpy[sizeof(linecpy)-1] = '\0';
-
         char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "", phone[MAX_FIELD_LEN] = "", email[MAX_FIELD_LEN] = "";
-        parseCsv4(linecpy, company, MAX_FIELD_LEN, person, MAX_FIELD_LEN, phone, MAX_FIELD_LEN, email, MAX_FIELD_LEN);
+        parseCsv4(line, company, sizeof(company), person, sizeof(person), phone, sizeof(phone), email, sizeof(email));
 
-        unescapeCSV(company); unescapeCSV(person); unescapeCSV(phone); unescapeCSV(email);
         if (!*company || !*person) continue;
 
         if (use_filter) {
@@ -410,8 +402,8 @@ void listContacts() {
     }
 }
 
+// ==== Delete (by company/person/email exact-insensitive, phone normalized) ====
 void deleteContact() {
-    // Accept keyword: company / person / phone / email
     char key[MAX_FIELD_LEN];
     printf("\n=== Delete Contact ===\n");
     printf("Enter company / contact person / phone / email to delete (or 0 to cancel): ");
@@ -422,7 +414,6 @@ void deleteContact() {
     if (strcmp(key, "0") == 0) { printf("[INFO] Delete cancelled.\n"); return; }
     if (!*key) { printf("[ERROR] Keyword cannot be empty!\n"); return; }
 
-    // Prepare keys: lowercase + phone normalization
     char key_lower[MAX_FIELD_LEN];
     strncpy(key_lower, key, MAX_FIELD_LEN - 1);
     key_lower[MAX_FIELD_LEN - 1] = '\0';
@@ -430,11 +421,10 @@ void deleteContact() {
 
     char key_phone_norm[MAX_FIELD_LEN];
     normalizePhone(key, key_phone_norm, sizeof(key_phone_norm));
-    int key_looks_like_phone = (int)(strlen(key_phone_norm) > 0);
-    int key_looks_like_email = (strchr(key, '@') != NULL);
+    int key_is_phone = (int)(strlen(key_phone_norm) > 0);
+    int key_is_email = (strchr(key, '@') != NULL);
 
-    // First pass: collect matches
-    FILE *rf = fopen("contacts.csv", "r");
+    FILE *rf = fopen(getContactsFile(), "r");
     if (!rf) { printf("[ERROR] No contacts file found!\n"); return; }
 
     typedef struct {
@@ -442,7 +432,7 @@ void deleteContact() {
         char person [MAX_FIELD_LEN];
         char phone  [MAX_FIELD_LEN];
         char email  [MAX_FIELD_LEN];
-        char rawline[MAX_LINE_LEN]; // write-back exact line to remove
+        char rawline[MAX_LINE_LEN];
     } Row;
 
     enum { MAX_MATCH = 1024 };
@@ -454,19 +444,11 @@ void deleteContact() {
         line[strcspn(line, "\n\r")] = '\0';
         if (!*line) continue;
 
-        char linecpy[MAX_LINE_LEN];
-        strncpy(linecpy, line, sizeof(linecpy) - 1);
-        linecpy[sizeof(linecpy) - 1] = '\0';
+        char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "", phone[MAX_FIELD_LEN] = "", email[MAX_FIELD_LEN] = "";
+        parseCsv4(line, company, sizeof(company), person, sizeof(person), phone, sizeof(phone), email, sizeof(email));
 
-        char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "";
-        char phone  [MAX_FIELD_LEN] = "", email [MAX_FIELD_LEN] = "";
-
-        parseCsv4(linecpy, company, MAX_FIELD_LEN, person, MAX_FIELD_LEN, phone, MAX_FIELD_LEN, email, MAX_FIELD_LEN);
-
-        unescapeCSV(company); unescapeCSV(person); unescapeCSV(phone); unescapeCSV(email);
         if (!*company && !*person && !*phone && !*email) continue;
 
-        // Prepare for compare
         char company_lower[MAX_FIELD_LEN], person_lower[MAX_FIELD_LEN], email_lower[MAX_FIELD_LEN];
         strncpy(company_lower, company, MAX_FIELD_LEN - 1); company_lower[MAX_FIELD_LEN - 1] = '\0';
         strncpy(person_lower , person , MAX_FIELD_LEN - 1); person_lower [MAX_FIELD_LEN - 1] = '\0';
@@ -478,12 +460,11 @@ void deleteContact() {
         char phone_norm[MAX_FIELD_LEN];
         normalizePhone(phone, phone_norm, sizeof(phone_norm));
 
-        // Match rules: exact-insensitive for company/person/email; normalized for phone
         int match = 0;
-        if (key_looks_like_phone) {
+        if (key_is_phone) {
             if (*phone_norm && strcmp(phone_norm, key_phone_norm) == 0) match = 1;
         }
-        if (!match && key_looks_like_email) {
+        if (!match && key_is_email) {
             if (*email_lower && strcmp(email_lower, key_lower) == 0) match = 1;
         }
         if (!match) {
@@ -493,13 +474,20 @@ void deleteContact() {
             }
         }
 
-        if (match && mcount < MAX_MATCH) {
-            strncpy(matches[mcount].company, company, MAX_FIELD_LEN - 1); matches[mcount].company[MAX_FIELD_LEN - 1] = '\0';
-            strncpy(matches[mcount].person , person , MAX_FIELD_LEN - 1); matches[mcount].person [MAX_FIELD_LEN - 1] = '\0';
-            strncpy(matches[mcount].phone  , phone  , MAX_FIELD_LEN - 1); matches[mcount].phone  [MAX_FIELD_LEN - 1] = '\0';
-            strncpy(matches[mcount].email  , email  , MAX_FIELD_LEN - 1); matches[mcount].email  [MAX_FIELD_LEN - 1] = '\0';
-            strncpy(matches[mcount].rawline, line   , MAX_LINE_LEN - 1);  matches[mcount].rawline[MAX_LINE_LEN - 1] = '\0';
-            mcount++;
+        if (match) {
+            if (mcount < MAX_MATCH) {
+                strncpy(matches[mcount].company, company, MAX_FIELD_LEN - 1);
+                strncpy(matches[mcount].person , person , MAX_FIELD_LEN - 1);
+                strncpy(matches[mcount].phone  , phone  , MAX_FIELD_LEN - 1);
+                strncpy(matches[mcount].email  , email  , MAX_FIELD_LEN - 1);
+                matches[mcount].company[MAX_FIELD_LEN-1] = '\0';
+                matches[mcount].person [MAX_FIELD_LEN-1] = '\0';
+                matches[mcount].phone  [MAX_FIELD_LEN-1] = '\0';
+                matches[mcount].email  [MAX_FIELD_LEN-1] = '\0';
+                strncpy(matches[mcount].rawline, line, MAX_LINE_LEN - 1);
+                matches[mcount].rawline[MAX_LINE_LEN-1] = '\0';
+                mcount++;
+            }
         }
     }
     fclose(rf);
@@ -509,8 +497,7 @@ void deleteContact() {
         return;
     }
 
-    // Disambiguate if multiple matches
-    int choice_idx = 0; // 1..mcount
+    int choice_idx = 0;
     if (mcount == 1) {
         printf("\n--- Contact to Delete ---\n");
         printf("Company : %s\n", matches[0].company);
@@ -538,17 +525,11 @@ void deleteContact() {
             clearInputBuffer();
             if (sel == 0) { printf("[INFO] Delete cancelled.\n"); return; }
             if (sel >= 1 && sel <= mcount) {
-                struct Contact pick = {0};
-                strncpy(pick.company, matches[sel-1].company, MAX_FIELD_LEN-1);
-                strncpy(pick.person , matches[sel-1].person , MAX_FIELD_LEN-1);
-                strncpy(pick.phone  , matches[sel-1].phone  , MAX_FIELD_LEN-1);
-                strncpy(pick.email  , matches[sel-1].email  , MAX_FIELD_LEN-1);
-
                 printf("\n--- Contact to Delete ---\n");
-                printf("Company : %s\n", pick.company);
-                printf("Contact : %s\n", pick.person);
-                printf("Phone   : %s\n", pick.phone);
-                printf("Email   : %s\n", pick.email);
+                printf("Company : %s\n", matches[sel-1].company);
+                printf("Contact : %s\n", matches[sel-1].person);
+                printf("Phone   : %s\n", matches[sel-1].phone);
+                printf("Email   : %s\n", matches[sel-1].email);
                 printf("------------------------\n");
                 if (!confirmAction("\nAre you sure you want to delete this contact?")) {
                     printf("[INFO] Delete cancelled.\n"); return;
@@ -560,37 +541,32 @@ void deleteContact() {
         }
     }
 
-    // Second pass: actually delete the chosen line
-    struct { char rawline[MAX_LINE_LEN]; } target;
-    strncpy(target.rawline, matches[choice_idx - 1].rawline, sizeof(target.rawline)-1);
-    target.rawline[sizeof(target.rawline)-1] = '\0';
-
-    rf = fopen("contacts.csv", "r");
+    char tmpfile[300];
+    makeTempPath(tmpfile, sizeof(tmpfile));
+    rf = fopen(getContactsFile(), "r");
     if (!rf) { printf("[ERROR] Cannot open contacts file!\n"); return; }
-    FILE *wf = fopen("contacts.tmp", "w");
+    FILE *wf = fopen(tmpfile, "w");
     if (!wf) { fclose(rf); printf("[ERROR] Cannot create temporary file!\n"); return; }
 
-    char line2[MAX_LINE_LEN];
     int deleted = 0;
-    while (fgets(line2, sizeof(line2), rf)) {
-        line2[strcspn(line2, "\n\r")] = '\0';
-        if (!*line2) continue;
-        if (!deleted && strcmp(line2, target.rawline) == 0) {
+    while (fgets(line, sizeof(line), rf)) {
+        line[strcspn(line, "\n\r")] = '\0';
+        if (!*line) continue;
+        if (!deleted && strcmp(line, matches[choice_idx - 1].rawline) == 0) {
             deleted = 1; // skip
             continue;
         }
-        fprintf(wf, "%s\n", line2);
+        fprintf(wf, "%s\n", line);
     }
-
     fclose(rf);
     fclose(wf);
 
-    if (remove("contacts.csv") != 0) {
+    if (remove(getContactsFile()) != 0) {
         printf("[ERROR] Failed to remove old file!\n");
-        remove("contacts.tmp");
+        remove(tmpfile);
         return;
     }
-    if (rename("contacts.tmp", "contacts.csv") != 0) {
+    if (rename(tmpfile, getContactsFile()) != 0) {
         printf("[ERROR] Failed to rename temporary file!\n");
         return;
     }
@@ -599,139 +575,79 @@ void deleteContact() {
     else         printf("\n[INFO] Nothing was deleted.\n");
 }
 
-// ==== Search (permissive, case-insensitive, all fields, phone-normalized, multi-token OR) ====
+// ==== Search (case-insensitive for company/person/phone/email; phone normalized) ====
 void searchContact() {
-    char key_raw[MAX_FIELD_LEN];
+    char key[MAX_FIELD_LEN];
     printf("\n=== Search Contact ===\n");
     printf("Enter keyword (company/person/phone/email, or 0 to cancel): ");
-    if (!fgets(key_raw, sizeof(key_raw), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
-    key_raw[strcspn(key_raw, "\n")] = '\0';
-    trimWhitespace(key_raw);
-    if (strcmp(key_raw, "0") == 0) { printf("[INFO] Search cancelled.\n"); return; }
-    if (!*key_raw) { printf("[ERROR] Search keyword cannot be empty!\n"); return; }
+    if (!fgets(key, sizeof(key), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
+    key[strcspn(key, "\n")] = '\0';
+    sanitizeInput(key);
+    if (strcmp(key, "0") == 0) { printf("[INFO] Search cancelled.\n"); return; }
+    if (!*key) { printf("[ERROR] Search keyword cannot be empty!\n"); return; }
 
-    // Lowercased keyword and tokenization (split by spaces)
-    char key_lower_all[MAX_FIELD_LEN];
-    strncpy(key_lower_all, key_raw, MAX_FIELD_LEN - 1);
-    key_lower_all[MAX_FIELD_LEN - 1] = '\0';
-    for (int i = 0; key_lower_all[i]; i++)
-        key_lower_all[i] = (char)tolower((unsigned char)key_lower_all[i]);
+    char key_lower[MAX_FIELD_LEN];
+    strncpy(key_lower, key, MAX_FIELD_LEN - 1); key_lower[MAX_FIELD_LEN - 1] = '\0';
+    for (int i = 0; key_lower[i]; i++) key_lower[i] = (char)tolower((unsigned char)key_lower[i]);
 
-    // Tokenize by spaces; up to, say, 8 tokens
-    const int MAX_TOK = 8;
-    char *tokens[MAX_TOK];
-    int tokc = 0;
-    {
-        char *p = key_lower_all;
-        while (*p && tokc < MAX_TOK) {
-            while (*p && isspace((unsigned char)*p)) p++;
-            if (!*p) break;
-            tokens[tokc++] = p;
-            while (*p && !isspace((unsigned char)*p)) p++;
-            if (*p) { *p = '\0'; p++; }
-        }
-    }
+    char key_phone_norm[MAX_FIELD_LEN];
+    normalizePhone(key, key_phone_norm, sizeof(key_phone_norm));
+    int key_is_phone = (int)(strlen(key_phone_norm) > 0);
+    int key_is_email = (strchr(key, '@') != NULL);
 
-    // Build a digits-only version of each token to match phone numbers flexibly
-    char tok_digits[MAX_TOK][MAX_FIELD_LEN];
-    for (int i = 0; i < tokc; i++) {
-        size_t j = 0;
-        for (size_t k = 0; tokens[i][k] && j + 1 < MAX_FIELD_LEN; k++) {
-            if (isdigit((unsigned char)tokens[i][k])) tok_digits[i][j++] = tokens[i][k];
-        }
-        tok_digits[i][j] = '\0';
-    }
-
-    FILE *fp = fopen("contacts.csv", "r");
+    FILE *fp = fopen(getContactsFile(), "r");
     if (!fp) { printf("[ERROR] No contacts file found!\n"); return; }
 
     char line[MAX_LINE_LEN];
-    int found_any = 0;
+    int found = 0;
 
     printf("\n--- Search Results ---\n");
     while (fgets(line, sizeof(line), fp)) {
         line[strcspn(line, "\n\r")] = '\0';
         if (!*line) continue;
 
-        char linecpy[MAX_LINE_LEN];
-        strncpy(linecpy, line, sizeof(linecpy) - 1);
-        linecpy[sizeof(linecpy) - 1] = '\0';
-
         char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "", phone[MAX_FIELD_LEN] = "", email[MAX_FIELD_LEN] = "";
-        // ใช้ตัวช่วยพาร์ส CSV 4 ฟิลด์ของคุณ
-        parseCsv4(linecpy,
-                  company, MAX_FIELD_LEN,
-                  person , MAX_FIELD_LEN,
-                  phone  , MAX_FIELD_LEN,
-                  email  , MAX_FIELD_LEN);
+        parseCsv4(line, company, sizeof(company), person, sizeof(person), phone, sizeof(phone), email, sizeof(email));
 
-        unescapeCSV(company); unescapeCSV(person); unescapeCSV(phone); unescapeCSV(email);
         if (!*company && !*person && !*phone && !*email) continue;
 
-        // Prepare lowercase copies for substring search
-        char company_l[MAX_FIELD_LEN], person_l[MAX_FIELD_LEN], phone_l[MAX_FIELD_LEN], email_l[MAX_FIELD_LEN];
-        strncpy(company_l, company, MAX_FIELD_LEN - 1); company_l[MAX_FIELD_LEN - 1] = '\0';
-        strncpy(person_l , person , MAX_FIELD_LEN - 1); person_l [MAX_FIELD_LEN - 1] = '\0';
-        strncpy(phone_l  , phone  , MAX_FIELD_LEN - 1); phone_l  [MAX_FIELD_LEN - 1] = '\0';
-        strncpy(email_l  , email  , MAX_FIELD_LEN - 1); email_l  [MAX_FIELD_LEN - 1] = '\0';
-        for (int i = 0; company_l[i]; i++) company_l[i] = (char)tolower((unsigned char)company_l[i]);
-        for (int i = 0; person_l [i]; i++) person_l [i] = (char)tolower((unsigned char)person_l [i]);
-        for (int i = 0; phone_l  [i]; i++) phone_l  [i] = (char)tolower((unsigned char)phone_l  [i]);
-        for (int i = 0; email_l  [i]; i++) email_l  [i] = (char)tolower((unsigned char)email_l  [i]);
+        // Prepare variants
+        char company_lower[MAX_FIELD_LEN], person_lower[MAX_FIELD_LEN], email_lower[MAX_FIELD_LEN], phone_norm[MAX_FIELD_LEN];
+        strncpy(company_lower, company, MAX_FIELD_LEN - 1); company_lower[MAX_FIELD_LEN - 1] = '\0';
+        strncpy(person_lower , person , MAX_FIELD_LEN - 1); person_lower [MAX_FIELD_LEN - 1] = '\0';
+        strncpy(email_lower  , email  , MAX_FIELD_LEN - 1); email_lower  [MAX_FIELD_LEN - 1] = '\0';
+        for (int i = 0; company_lower[i]; i++) company_lower[i] = (char)tolower((unsigned char)company_lower[i]);
+        for (int i = 0; person_lower [i]; i++) person_lower [i] = (char)tolower((unsigned char)person_lower [i]);
+        for (int i = 0; email_lower  [i]; i++) email_lower  [i] = (char)tolower((unsigned char)email_lower  [i]);
 
-        // Digits-only phone to match arbitrary phone formats
-        char phone_digits[MAX_FIELD_LEN];
-        normalizePhone(phone, phone_digits, sizeof(phone_digits));
+        normalizePhone(phone, phone_norm, sizeof(phone_norm));
 
-        // If no tokens (shouldn't happen), fallback to entire key string; otherwise OR across tokens
-        int matched = 0;
-        if (tokc == 0) {
-            // single big key
-            if (strstr(company_l, key_lower_all) ||
-                strstr(person_l , key_lower_all) ||
-                strstr(phone_l  , key_lower_all) ||
-                strstr(email_l  , key_lower_all)) {
-                matched = 1;
-            } else {
-                // also try digits against phone
-                char key_digits[MAX_FIELD_LEN] = "";
-                size_t j = 0;
-                for (size_t k = 0; key_lower_all[k] && j + 1 < MAX_FIELD_LEN; k++)
-                    if (isdigit((unsigned char)key_lower_all[k])) key_digits[j++] = key_lower_all[k];
-                key_digits[j] = '\0';
-                if (*key_digits && strstr(phone_digits, key_digits)) matched = 1;
-            }
-        } else {
-            // OR: any token matches any field; for phone also try digits-only contains
-            for (int t = 0; t < tokc && !matched; t++) {
-                if (strstr(company_l, tokens[t]) ||
-                    strstr(person_l , tokens[t]) ||
-                    strstr(phone_l  , tokens[t]) ||
-                    strstr(email_l  , tokens[t])) {
-                    matched = 1;
-                    break;
-                }
-                if (*tok_digits[t] && strstr(phone_digits, tok_digits[t])) {
-                    matched = 1;
-                    break;
-                }
+        int match = 0;
+        if (key_is_phone) {
+            if (*phone_norm && strstr(phone_norm, key_phone_norm) != NULL) match = 1; // substring on normalized
+        }
+        if (!match && key_is_email) {
+            if (*email_lower && strstr(email_lower, key_lower) != NULL) match = 1;
+        }
+        if (!match) {
+            if (strstr(company_lower, key_lower) != NULL || strstr(person_lower, key_lower) != NULL) {
+                match = 1;
             }
         }
 
-        if (matched) {
+        if (match) {
             printf("\nCompany : %s\n", company);
             printf("Contact : %s\n", person);
             printf("Phone   : %s\n", phone);
             printf("Email   : %s\n", email);
             printf("-----------------------------------\n");
-            found_any = 1;
+            found = 1;
         }
     }
 
-    if (!found_any) printf("[INFO] No matching contacts found.\n");
+    if (!found) printf("[INFO] No matching contacts found.\n");
     fclose(fp);
 }
-
 
 // ==== Update (by company, case-insensitive) ====
 void updateContact() {
@@ -748,9 +664,10 @@ void updateContact() {
     strncpy(key_lower, key, MAX_FIELD_LEN - 1); key_lower[MAX_FIELD_LEN - 1] = '\0';
     for (int i = 0; key_lower[i]; i++) key_lower[i] = (char)tolower((unsigned char)key_lower[i]);
 
-    FILE *rf = fopen("contacts.csv", "r");
+    FILE *rf = fopen(getContactsFile(), "r");
     if (!rf) { printf("[ERROR] No contacts file found!\n"); return; }
-    FILE *wf = fopen("contacts.tmp", "w");
+    char tmpfile[300]; makeTempPath(tmpfile, sizeof(tmpfile));
+    FILE *wf = fopen(tmpfile, "w");
     if (!wf) { fclose(rf); printf("[ERROR] Cannot create temporary file!\n"); return; }
 
     char line[MAX_LINE_LEN];
@@ -760,14 +677,8 @@ void updateContact() {
         line[strcspn(line, "\n\r")] = '\0';
         if (!*line) continue;
 
-        char linecpy[MAX_LINE_LEN];
-        strncpy(linecpy, line, sizeof(linecpy)-1);
-        linecpy[sizeof(linecpy)-1] = '\0';
-
         char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "", phone[MAX_FIELD_LEN] = "", email[MAX_FIELD_LEN] = "";
-        parseCsv4(linecpy, company, MAX_FIELD_LEN, person, MAX_FIELD_LEN, phone, MAX_FIELD_LEN, email, MAX_FIELD_LEN);
-
-        unescapeCSV(company); unescapeCSV(person); unescapeCSV(phone); unescapeCSV(email);
+        parseCsv4(line, company, sizeof(company), person, sizeof(person), phone, sizeof(phone), email, sizeof(email));
 
         char company_lower[MAX_FIELD_LEN];
         strncpy(company_lower, company, MAX_FIELD_LEN - 1); company_lower[MAX_FIELD_LEN - 1] = '\0';
@@ -883,8 +794,8 @@ void updateContact() {
 
     fclose(rf); fclose(wf);
 
-    if (remove("contacts.csv") != 0) { printf("[ERROR] Failed to remove old file!\n"); remove("contacts.tmp"); return; }
-    if (rename("contacts.tmp", "contacts.csv") != 0) { printf("[ERROR] Failed to rename temporary file!\n"); return; }
+    if (remove(getContactsFile()) != 0) { printf("[ERROR] Failed to remove old file!\n"); remove(tmpfile); return; }
+    if (rename(tmpfile, getContactsFile()) != 0) { printf("[ERROR] Failed to rename temporary file!\n"); return; }
 
     if (updated) printf("\n[SUCCESS] Contact updated successfully!\n");
     else         printf("\n[INFO] No changes made.\n");
