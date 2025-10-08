@@ -102,7 +102,7 @@ int main() {
         printf("4. Search Contact\n");
         printf("5. Update Contact\n");
         printf("6. Run Unit Tests\n");
-        printf("7. Run E2E Tests (safe sandbox)\n");
+        printf("7. Run E2E Tests\n");
         printf("0. Exit\n");
         printf("===========================================\n");
         printf("Enter your choice: ");
@@ -163,6 +163,28 @@ void sanitizeInput(char *str) {
     trimWhitespace(str);
 }
 
+
+// --- Robust normalization helpers (added) ---
+static void toLowerInPlace(char *s) {
+    if (!s) return;
+    for (char *p = s; *p; ++p) *p = (char)tolower((unsigned char)*p);
+}
+
+// Normalize for text keys: trim, lower, keep only [a-z0-9 ] and compress spaces
+static void normalizeKey(char *s) {
+    if (!s) return;
+    trimWhitespace(s);
+    toLowerInPlace(s);
+    char *r = s, *w = s; int spaced = 1;
+    while (*r) {
+        unsigned char c = (unsigned char)*r++;
+        if (isalnum(c)) { *w++ = (char)c; spaced = 0; }
+        else if (isspace(c)) { if (!spaced) { *w++ = ' '; spaced = 1; } }
+        // drop punctuation (quotes, commas, etc.)
+    }
+    if (w > s && *(w-1) == ' ') --w;
+    *w = '\0';
+}
 // Escape a CSV field (RFC4180-ish)
 void escapeCSV(const char *input, char *output, size_t output_size) {
     if (!input || !output || output_size == 0) return;
@@ -424,7 +446,10 @@ void deleteContact() {
     int key_is_phone = (int)(strlen(key_phone_norm) > 0);
     int key_is_email = (strchr(key, '@') != NULL);
 
-    FILE *rf = fopen(getContactsFile(), "r");
+    char key_norm[MAX_FIELD_LEN];
+    strncpy(key_norm, key, MAX_FIELD_LEN - 1); key_norm[MAX_FIELD_LEN - 1] = '\0';
+    normalizeKey(key_norm);
+FILE *rf = fopen(getContactsFile(), "r");
     if (!rf) { printf("[ERROR] No contacts file found!\n"); return; }
 
     typedef struct {
@@ -460,19 +485,23 @@ void deleteContact() {
         char phone_norm[MAX_FIELD_LEN];
         normalizePhone(phone, phone_norm, sizeof(phone_norm));
 
+        
         int match = 0;
         if (key_is_phone) {
             if (*phone_norm && strcmp(phone_norm, key_phone_norm) == 0) match = 1;
         }
         if (!match && key_is_email) {
-            if (*email_lower && strcmp(email_lower, key_lower) == 0) match = 1;
+            if (*email_lower && strstr(email_lower, key_lower) != NULL) match = 1; // CI substring for email
         }
         if (!match) {
-            if ((*company_lower && strcmp(company_lower, key_lower) == 0) ||
-                (*person_lower  && strcmp(person_lower , key_lower) == 0)) {
+            // Build normalized text keys for robust company/person matching
+            char company_norm[MAX_FIELD_LEN]; strncpy(company_norm, company, MAX_FIELD_LEN - 1); company_norm[MAX_FIELD_LEN - 1] = '\0'; normalizeKey(company_norm);
+            char person_norm [MAX_FIELD_LEN]; strncpy(person_norm , person , MAX_FIELD_LEN - 1); person_norm [MAX_FIELD_LEN - 1] = '\0'; normalizeKey(person_norm);
+            if ((strstr(company_norm, key_norm) != NULL) || (strstr(person_norm, key_norm) != NULL)) {
                 match = 1;
             }
         }
+
 
         if (match) {
             if (mcount < MAX_MATCH) {
@@ -575,7 +604,7 @@ void deleteContact() {
     else         printf("\n[INFO] Nothing was deleted.\n");
 }
 
-// ==== Search (case-insensitive for company/person/phone/email; phone normalized) ====
+// ==== Search (case-insensitive; company/person/email = prefix match, phone = substring) ====
 void searchContact() {
     char key[MAX_FIELD_LEN];
     printf("\n=== Search Contact ===\n");
@@ -586,14 +615,17 @@ void searchContact() {
     if (strcmp(key, "0") == 0) { printf("[INFO] Search cancelled.\n"); return; }
     if (!*key) { printf("[ERROR] Search keyword cannot be empty!\n"); return; }
 
+    // เตรียมคีย์เวิร์ด (lowercase / normalize)
     char key_lower[MAX_FIELD_LEN];
-    strncpy(key_lower, key, MAX_FIELD_LEN - 1); key_lower[MAX_FIELD_LEN - 1] = '\0';
+    strncpy(key_lower, key, MAX_FIELD_LEN - 1);
+    key_lower[MAX_FIELD_LEN - 1] = '\0';
     for (int i = 0; key_lower[i]; i++) key_lower[i] = (char)tolower((unsigned char)key_lower[i]);
 
     char key_phone_norm[MAX_FIELD_LEN];
     normalizePhone(key, key_phone_norm, sizeof(key_phone_norm));
-    int key_is_phone = (int)(strlen(key_phone_norm) > 0);
-    int key_is_email = (strchr(key, '@') != NULL);
+
+    int key_is_phone = (int)(strlen(key_phone_norm) > 0);   // ถ้ามีตัวเลขจน normalize แล้วไม่ว่าง
+    int key_is_email = (strchr(key, '@') != NULL);          // เดาจาก '@'
 
     FILE *fp = fopen(getContactsFile(), "r");
     if (!fp) { printf("[ERROR] No contacts file found!\n"); return; }
@@ -608,10 +640,8 @@ void searchContact() {
 
         char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "", phone[MAX_FIELD_LEN] = "", email[MAX_FIELD_LEN] = "";
         parseCsv4(line, company, sizeof(company), person, sizeof(person), phone, sizeof(phone), email, sizeof(email));
-
         if (!*company && !*person && !*phone && !*email) continue;
 
-        // Prepare variants
         char company_lower[MAX_FIELD_LEN], person_lower[MAX_FIELD_LEN], email_lower[MAX_FIELD_LEN], phone_norm[MAX_FIELD_LEN];
         strncpy(company_lower, company, MAX_FIELD_LEN - 1); company_lower[MAX_FIELD_LEN - 1] = '\0';
         strncpy(person_lower , person , MAX_FIELD_LEN - 1); person_lower [MAX_FIELD_LEN - 1] = '\0';
@@ -623,16 +653,15 @@ void searchContact() {
         normalizePhone(phone, phone_norm, sizeof(phone_norm));
 
         int match = 0;
+        size_t klen = strlen(key_lower);
+
         if (key_is_phone) {
-            if (*phone_norm && strstr(phone_norm, key_phone_norm) != NULL) match = 1; // substring on normalized
-        }
-        if (!match && key_is_email) {
-            if (*email_lower && strstr(email_lower, key_lower) != NULL) match = 1;
-        }
-        if (!match) {
-            if (strstr(company_lower, key_lower) != NULL || strstr(person_lower, key_lower) != NULL) {
-                match = 1;
-            }
+            if (*phone_norm && strstr(phone_norm, key_phone_norm) != NULL) match = 1;
+        } else if (key_is_email) {
+            if (*email_lower && klen > 0 && strncmp(email_lower, key_lower, klen) == 0) match = 1;
+        } else {
+            if (!match && *company_lower && klen > 0 && strncmp(company_lower, key_lower, klen) == 0) match = 1;
+            if (!match && *person_lower  && klen > 0 && strncmp(person_lower , key_lower, klen) == 0) match = 1;
         }
 
         if (match) {
@@ -660,11 +689,10 @@ void updateContact() {
     if (strcmp(key, "0") == 0) { printf("[INFO] Update cancelled.\n"); return; }
     if (!*key) { printf("[ERROR] Company name cannot be empty!\n"); return; }
 
-    char key_lower[MAX_FIELD_LEN];
-    strncpy(key_lower, key, MAX_FIELD_LEN - 1); key_lower[MAX_FIELD_LEN - 1] = '\0';
-    for (int i = 0; key_lower[i]; i++) key_lower[i] = (char)tolower((unsigned char)key_lower[i]);
-
-    FILE *rf = fopen(getContactsFile(), "r");
+    char key_norm[MAX_FIELD_LEN];
+    strncpy(key_norm, key, MAX_FIELD_LEN - 1); key_norm[MAX_FIELD_LEN - 1] = ' ';
+    normalizeKey(key_norm);
+FILE *rf = fopen(getContactsFile(), "r");
     if (!rf) { printf("[ERROR] No contacts file found!\n"); return; }
     char tmpfile[300]; makeTempPath(tmpfile, sizeof(tmpfile));
     FILE *wf = fopen(tmpfile, "w");
@@ -680,11 +708,11 @@ void updateContact() {
         char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "", phone[MAX_FIELD_LEN] = "", email[MAX_FIELD_LEN] = "";
         parseCsv4(line, company, sizeof(company), person, sizeof(person), phone, sizeof(phone), email, sizeof(email));
 
-        char company_lower[MAX_FIELD_LEN];
-        strncpy(company_lower, company, MAX_FIELD_LEN - 1); company_lower[MAX_FIELD_LEN - 1] = '\0';
-        for (int i = 0; company_lower[i]; i++) company_lower[i] = (char)tolower((unsigned char)company_lower[i]);
+        char company_norm[MAX_FIELD_LEN];
+        strncpy(company_norm, company, MAX_FIELD_LEN - 1); company_norm[MAX_FIELD_LEN - 1] = ' ';
+        normalizeKey(company_norm);
 
-        if (!updated && *company && strcmp(company_lower, key_lower) == 0) {
+        if (!updated && *company && strcmp(company_norm, key_norm) == 0) {
             int choice; char buf[MAX_FIELD_LEN];
             printf("\n--- Current Contact ---\n");
             printf("Company : %s\n", company);
@@ -985,6 +1013,7 @@ static int deleteContactTestHelper(const char *company) {
     return deleted;
 }
 
+
 // ==== Unit Tests ====
 void runUnitTests() {
     test_passed = test_failed = 0;
@@ -1201,18 +1230,31 @@ static int with_stdin_script(const char *script, void (*fn)(void)) {
 
 // ===== E2E TESTS =====
 void runE2ETests() {
+    // === E2E mode: use PRODUCTION file with backup/restore ===
+    setContactsFile(getContactsFile());
+    char __bak_path[512];
+    snprintf(__bak_path, sizeof(__bak_path), "%s.bak", getContactsFile());
+
+    int had_backup = 0;
+    { FILE *probe = fopen(getContactsFile(), "r"); if (probe) { fclose(probe); had_backup = 1; } }
+
+    if (had_backup) {
+        if (rename(getContactsFile(), __bak_path) != 0) {
+            FILE *rf = fopen(getContactsFile(), "r"); FILE *wf = rf ? fopen(__bak_path, "w") : NULL;
+            if (rf && wf) { char buf[4096]; size_t n; while ((n = fread(buf,1,sizeof(buf),rf))>0) fwrite(buf,1,n,wf); }
+            if (rf) fclose(rf); if (wf) fclose(wf);
+        }
+    }
+    { FILE *init = fopen(getContactsFile(), "w"); if (init) fclose(init); }
+    char __tmp_path[256]; makeTempPath(__tmp_path, sizeof(__tmp_path));
+
     int pass = 0, fail = 0;
     #define E2E_ASSERT(cond, name) do{ if (cond){ printf("  [PASS] %s\n", name); pass++; } else { printf("  [FAIL] %s\n", name); fail++; } }while(0)
 
     printf("\n========================================\n");
     printf("  E2E TESTS - Contact Management\n");
     printf("========================================\n\n");
-
-    // Start fresh
-    remove("contacts.csv");
-    remove("contacts.tmp");
-
-    // --- E1: Add multiple (with comma, quotes, and duplicates) ---
+// --- E1: Add multiple (with comma, quotes, and duplicates) ---
     // DupCo #1
     with_stdin_script(
         "DupCo\n"
@@ -1250,14 +1292,14 @@ void runE2ETests() {
         addContact
     );
 
-    E2E_ASSERT(countContactsTest("contacts.csv") == 4, "E1: added 4 rows");
-    E2E_ASSERT(contactExistsByCompanyCI("contacts.csv", "Company, LLC"), "E1.1: comma in company is stored/parsed");
-    E2E_ASSERT(contactExistsByCompanyCI("contacts.csv", "Alpha \"Inc\""), "E1.2: embedded quotes are stored/parsed");
+    E2E_ASSERT(countContactsTest(getContactsFile()) == 4, "E1: added 4 rows");
+    E2E_ASSERT(contactExistsByCompanyCI(getContactsFile(), "Company, LLC"), "E1.1: comma in company is stored/parsed");
+    E2E_ASSERT(contactExistsByCompanyCI(getContactsFile(), "Alpha \"Inc\""), "E1.2: embedded quotes are stored/parsed");
 
     // --- E2: Search (smoke) ---
     // just run it to ensure no crash; we assert by file state instead
     with_stdin_script("alpha\n", searchContact);
-    E2E_ASSERT(contactExistsByEmailCI("contacts.csv", "alice@alpha.com"), "E2: email case-insensitive exists");
+    E2E_ASSERT(contactExistsByEmailCI(getContactsFile(), "alice@alpha.com"), "E2: email case-insensitive exists");
 
     // --- E3: Update Alpha "Inc" phone -> +66 90 000 0000 ---
     with_stdin_script(
@@ -1267,8 +1309,8 @@ void runE2ETests() {
         "y\n",             // confirm save
         updateContact
     );
-    E2E_ASSERT(contactExistsByPhoneNorm("contacts.csv", "+66900000000"), "E3: updated phone (normalized) exists");
-    E2E_ASSERT(!contactExistsByPhoneNorm("contacts.csv", "0900000000"), "E3.1: old phone no longer exists");
+    E2E_ASSERT(contactExistsByPhoneNorm(getContactsFile(), "+66900000000"), "E3: updated phone (normalized) exists");
+    E2E_ASSERT(!contactExistsByPhoneNorm(getContactsFile(), "0900000000"), "E3.1: old phone no longer exists");
 
     // --- E4: Delete one of duplicates (DupCo) by selecting #2 ---
     with_stdin_script(
@@ -1277,8 +1319,8 @@ void runE2ETests() {
         "y\n",     // confirm
         deleteContact
     );
-    E2E_ASSERT(countContactsTest("contacts.csv") == 3, "E4: one of duplicates removed");
-    E2E_ASSERT(contactExistsByCompanyCI("contacts.csv", "DupCo"), "E4.1: a DupCo record still remains");
+    E2E_ASSERT(countContactsTest(getContactsFile()) == 3, "E4: one of duplicates removed");
+    E2E_ASSERT(contactExistsByCompanyCI(getContactsFile(), "DupCo"), "E4.1: a DupCo record still remains");
 
     // --- E5: Delete by phone (Company, LLC) using normalized phone ---
     with_stdin_script(
@@ -1286,8 +1328,8 @@ void runE2ETests() {
         "y\n",
         deleteContact
     );
-    E2E_ASSERT(!contactExistsByCompanyCI("contacts.csv", "Company, LLC"), "E5: delete by phone removed Company, LLC");
-    E2E_ASSERT(countContactsTest("contacts.csv") == 2, "E5.1: 2 rows left after phone-based delete");
+    E2E_ASSERT(!contactExistsByCompanyCI(getContactsFile(), "Company, LLC"), "E5: delete by phone removed Company, LLC");
+    E2E_ASSERT(countContactsTest(getContactsFile()) == 2, "E5.1: 2 rows left after phone-based delete");
 
     // --- E6: Delete by company (case-insensitive) Alpha "Inc" ---
     with_stdin_script(
@@ -1295,8 +1337,8 @@ void runE2ETests() {
         "y\n",
         deleteContact
     );
-    E2E_ASSERT(!contactExistsByCompanyCI("contacts.csv", "Alpha \"Inc\""), "E6: case-insensitive delete (company)");
-    E2E_ASSERT(countContactsTest("contacts.csv") == 1, "E6.1: 1 row left");
+    E2E_ASSERT(!contactExistsByCompanyCI(getContactsFile(), "Alpha \"Inc\""), "E6: case-insensitive delete (company)");
+    E2E_ASSERT(countContactsTest(getContactsFile()) == 1, "E6.1: 1 row left");
 
     // --- E7: Final cleanup - delete remaining DupCo ---
     with_stdin_script(
@@ -1304,11 +1346,11 @@ void runE2ETests() {
         "y\n",   // only one match now -> direct confirm
         deleteContact
     );
-    E2E_ASSERT(countContactsTest("contacts.csv") == 0, "E7: empty after final delete");
+    E2E_ASSERT(countContactsTest(getContactsFile()) == 0, "E7: empty after final delete");
 
     // --- E8: Delete non-existent should be no-op ---
     with_stdin_script("NoSuchKey\n", deleteContact);
-    E2E_ASSERT(countContactsTest("contacts.csv") == 0, "E8: delete non-existent is a no-op");
+    E2E_ASSERT(countContactsTest(getContactsFile()) == 0, "E8: delete non-existent is a no-op");
 
     // Summary
     printf("\n========================================\n");
@@ -1321,4 +1363,7 @@ void runE2ETests() {
         printf("Success Rate: %.1f%%\n", (pass * 100.0) / (pass + fail));
     }
     printf("========================================\n");
+
+    // === Restore original user data ===
+    if (had_backup) { remove(getContactsFile()); rename(__bak_path, getContactsFile()); }
 }
