@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include "test.h"
+
 
 #ifdef _WIN32
   #include <conio.h>
@@ -59,7 +61,6 @@ void listContacts();
 void deleteContact();
 void searchContact();
 void updateContact();
-void runUnitTests();
 void runE2ETests();
 
 void clearInputBuffer();
@@ -80,12 +81,12 @@ static void parseCsv4(const char *srcLine,
 
 // helpers for tests
 static void normalizePhone(const char *in, char *out, size_t out_size);
-static int contactExistsByCompanyCI(const char *filename, const char *company);
-static int contactExistsByPhoneNorm  (const char *filename, const char *phone_raw);
-static int contactExistsByEmailCI    (const char *filename, const char *email_raw);
+// static int contactExistsByCompanyCI(const char *filename, const char *company);
+// static int contactExistsByPhoneNorm  (const char *filename, const char *phone_raw);
+// static int contactExistsByEmailCI    (const char *filename, const char *email_raw);
 
-// ==== Globals for tests ====
-static int test_passed = 0, test_failed = 0;
+// // ==== Globals for tests ====
+// static int test_passed = 0, test_failed = 0;
 #define TEST_ASSERT(cond, name) do { if (cond){printf("  [PASS] %s\n", name); test_passed++;} else {printf("  [FAIL] %s\n", name); test_failed++;} } while(0)
 
 // ==== Main ====
@@ -829,281 +830,6 @@ FILE *rf = fopen(getContactsFile(), "r");
     else         printf("\n[INFO] No changes made.\n");
 }
 
-// ==== Unit test helpers (file: test_contacts.csv) ====
-static int addContactTestHelper(const char *company, const char *person, const char *phone, const char *email) {
-    FILE *fp = fopen("test_contacts.csv", "a");
-    if (!fp) return 0;
-    char a[MAX_FIELD_LEN*2], b[MAX_FIELD_LEN*2], c[MAX_FIELD_LEN*2], d[MAX_FIELD_LEN*2];
-    escapeCSV(company, a, sizeof(a));
-    escapeCSV(person , b, sizeof(b));
-    escapeCSV(phone  , c, sizeof(c));
-    escapeCSV(email  , d, sizeof(d));
-    fprintf(fp, "%s,%s,%s,%s\n", a,b,c,d);
-    fclose(fp);
-    return 1;
-}
-
-static int countContactsTest(const char *filename) {
-    FILE *fp = fopen(filename, "r"); if (!fp) return 0;
-    char line[MAX_LINE_LEN]; int count = 0;
-    while (fgets(line, sizeof(line), fp)) { line[strcspn(line, "\n\r")] = '\0'; if (*line) count++; }
-    fclose(fp); return count;
-}
-
-// Read first column (company) CSV-safely
-static int contactExistsByCompanyCI(const char *filename, const char *company) {
-    FILE *fp = fopen(filename, "r"); if (!fp) return 0;
-
-    char key_lower[MAX_FIELD_LEN];
-    strncpy(key_lower, company, MAX_FIELD_LEN-1); key_lower[MAX_FIELD_LEN-1] = '\0';
-    for (int i = 0; key_lower[i]; i++) key_lower[i] = (char)tolower((unsigned char)key_lower[i]);
-
-    char line[MAX_LINE_LEN];
-    while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\n\r")] = '\0'; if (!*line) continue;
-
-        char linecpy[MAX_LINE_LEN];
-        strncpy(linecpy, line, sizeof(linecpy)-1); linecpy[sizeof(linecpy)-1] = '\0';
-
-        char comp[MAX_FIELD_LEN] = "";
-        char *src = linecpy, *dst = comp; 
-        int in_quotes = 0;
-
-        // >>> FIX: support embedded quotes "" inside quoted fields
-        while (*src && (in_quotes || *src != ',')) {
-            if (*src == '"') {
-                if (in_quotes && *(src + 1) == '"') {
-                    if ((size_t)(dst - comp) < MAX_FIELD_LEN - 1) *dst++ = '"';
-                    src += 2;
-                } else {
-                    in_quotes = !in_quotes;
-                    src++;
-                }
-            } else {
-                if ((size_t)(dst - comp) < MAX_FIELD_LEN - 1) *dst++ = *src;
-                src++;
-            }
-        }
-        *dst = '\0';
-
-        unescapeCSV(comp);
-
-        char comp_lower[MAX_FIELD_LEN];
-        strncpy(comp_lower, comp, MAX_FIELD_LEN-1); comp_lower[MAX_FIELD_LEN-1] = '\0';
-        for (int i = 0; comp_lower[i]; i++) comp_lower[i] = (char)tolower((unsigned char)comp_lower[i]);
-        if (strcmp(comp_lower, key_lower) == 0) { fclose(fp); return 1; }
-    }
-    fclose(fp); return 0;
-}
-
-
-static int contactExistsByPhoneNorm(const char *filename, const char *phone_raw) {
-    FILE *fp = fopen(filename, "r"); if (!fp) return 0;
-    char key_norm[MAX_FIELD_LEN]; normalizePhone(phone_raw, key_norm, sizeof(key_norm));
-    char line[MAX_LINE_LEN];
-    while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\n\r")] = '\0'; if (!*line) continue;
-
-        char linecpy[MAX_LINE_LEN];
-        strncpy(linecpy, line, sizeof(linecpy)-1); linecpy[sizeof(linecpy)-1] = '\0';
-
-        char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "", phone[MAX_FIELD_LEN] = "", email[MAX_FIELD_LEN] = "";
-        char *fields[4] = {company, person, phone, email};
-        int field_idx = 0, in_quotes = 0;
-        char *src = linecpy, *dst = fields[0];
-        while (*src && field_idx < 4) {
-            if (*src == '"') { in_quotes = !in_quotes; src++; }
-            else if (*src == ',' && !in_quotes) { *dst = '\0'; field_idx++; if (field_idx<4) dst = fields[field_idx]; src++; }
-            else { *dst++ = *src++; }
-        }
-        *dst = '\0';
-        unescapeCSV(phone);
-        char pn[MAX_FIELD_LEN]; normalizePhone(phone, pn, sizeof(pn));
-        if (*pn && strcmp(pn, key_norm) == 0) { fclose(fp); return 1; }
-    }
-    fclose(fp); return 0;
-}
-
-static int contactExistsByEmailCI(const char *filename, const char *email_raw) {
-    FILE *fp = fopen(filename, "r"); if (!fp) return 0;
-
-    char key_lower[MAX_FIELD_LEN];
-    strncpy(key_lower, email_raw, MAX_FIELD_LEN-1); key_lower[MAX_FIELD_LEN-1] = '\0';
-    for (int i = 0; key_lower[i]; i++) key_lower[i] = (char)tolower((unsigned char)key_lower[i]);
-
-    char line[MAX_LINE_LEN];
-    while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\n\r")] = '\0'; if (!*line) continue;
-
-        char linecpy[MAX_LINE_LEN];
-        strncpy(linecpy, line, sizeof(linecpy)-1); linecpy[sizeof(linecpy)-1] = '\0';
-
-        char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "", phone[MAX_FIELD_LEN] = "", email[MAX_FIELD_LEN] = "";
-        char *fields[4] = {company, person, phone, email};
-        int field_idx = 0, in_quotes = 0;
-        char *src = linecpy, *dst = fields[0];
-        while (*src && field_idx < 4) {
-            if (*src == '"') { in_quotes = !in_quotes; src++; }
-            else if (*src == ',' && !in_quotes) { *dst = '\0'; field_idx++; if (field_idx<4) dst = fields[field_idx]; src++; }
-            else { *dst++ = *src++; }
-        }
-        *dst = '\0';
-        unescapeCSV(email);
-        char email_lower[MAX_FIELD_LEN];
-        strncpy(email_lower, email, MAX_FIELD_LEN-1); email_lower[MAX_FIELD_LEN-1] = '\0';
-        for (int i=0; email_lower[i]; i++) email_lower[i] = (char)tolower((unsigned char)email_lower[i]);
-        if (*email_lower && strcmp(email_lower, key_lower) == 0) { fclose(fp); return 1; }
-    }
-    fclose(fp); return 0;
-}
-
-static int deleteContactTestHelper(const char *company) {
-    char key_lower[MAX_FIELD_LEN]; 
-    strncpy(key_lower, company, MAX_FIELD_LEN-1); key_lower[MAX_FIELD_LEN-1] = '\0';
-    for (int i = 0; key_lower[i]; i++) key_lower[i] = (char)tolower((unsigned char)key_lower[i]);
-
-    FILE *rf = fopen("test_contacts.csv", "r"); if (!rf) return 0;
-    FILE *wf = fopen("test_contacts.tmp", "w"); if (!wf) { fclose(rf); return 0; }
-
-    char line[MAX_LINE_LEN]; 
-    int deleted = 0;
-    while (fgets(line, sizeof(line), rf)) {
-        line[strcspn(line, "\n\r")] = '\0'; if (!*line) continue;
-
-        char linecpy[MAX_LINE_LEN];
-        strncpy(linecpy, line, sizeof(linecpy)-1); linecpy[sizeof(linecpy)-1] = '\0';
-
-        char comp[MAX_FIELD_LEN] = "";
-        char *src = linecpy, *dst = comp; 
-        int in_quotes = 0;
-
-        // >>> FIX: support embedded quotes "" inside quoted fields
-        while (*src && (in_quotes || *src != ',')) {
-            if (*src == '"') {
-                if (in_quotes && *(src + 1) == '"') {
-                    if ((size_t)(dst - comp) < MAX_FIELD_LEN - 1) *dst++ = '"';
-                    src += 2;
-                } else {
-                    in_quotes = !in_quotes;
-                    src++;
-                }
-            } else {
-                if ((size_t)(dst - comp) < MAX_FIELD_LEN - 1) *dst++ = *src;
-                src++;
-            }
-        }
-        *dst = '\0';
-        // <<< END FIX
-
-        unescapeCSV(comp);
-
-        char comp_lower[MAX_FIELD_LEN];
-        strncpy(comp_lower, comp, MAX_FIELD_LEN-1); comp_lower[MAX_FIELD_LEN-1] = '\0';
-        for (int i = 0; comp_lower[i]; i++) comp_lower[i] = (char)tolower((unsigned char)comp_lower[i]);
-
-        if (!deleted && strcmp(comp_lower, key_lower) == 0) { 
-            deleted = 1; 
-            continue; 
-        }
-        fprintf(wf, "%s\n", line);
-    }
-    fclose(rf); fclose(wf);
-    remove("test_contacts.csv");
-    rename("test_contacts.tmp", "test_contacts.csv");
-    return deleted;
-}
-
-
-// ==== Unit Tests ====
-void runUnitTests() {
-    test_passed = test_failed = 0;
-
-    printf("\n========================================\n");
-    printf("  UNIT TESTS - Contact Management\n");
-    printf("========================================\n\n");
-
-    // Group A: Add
-    printf("Group A: Add Functions\n");
-    remove("test_contacts.csv");
-    int ok = addContactTestHelper("Google", "John Doe", "081-234-5678", "john@google.com");
-    TEST_ASSERT(ok && contactExistsByCompanyCI("test_contacts.csv", "Google"), "A1: add one basic row");
-
-    remove("test_contacts.csv");
-    addContactTestHelper("Google", "John", "081-111-1111", "john@google.com");
-    addContactTestHelper("Microsoft", "Jane", "082-222-2222", "jane@microsoft.com");
-    addContactTestHelper("Apple", "Bob", "083-333-3333", "bob@apple.com");
-    TEST_ASSERT(countContactsTest("test_contacts.csv") == 3, "A2: add three rows total");
-
-    remove("test_contacts.csv");
-    ok = addContactTestHelper("Company, LLC", "John", "081-234-5678", "john@company.com");
-    TEST_ASSERT(ok && contactExistsByCompanyCI("test_contacts.csv", "Company, LLC"), "A3: handle comma in company (quoted)");
-
-    remove("test_contacts.csv");
-    ok = addContactTestHelper("Alpha \"Inc\"", "Alice", "090-000-0000", "alice@alpha.com");
-    TEST_ASSERT(ok && contactExistsByCompanyCI("test_contacts.csv", "Alpha \"Inc\""), "A4: handle embedded quotes");
-
-    remove("test_contacts.csv");
-    addContactTestHelper("TelCo", "Tom", "(081) 234-5678", "Tom@Mail.COM");
-    TEST_ASSERT(contactExistsByPhoneNorm("test_contacts.csv", "0812345678"), "A5: phone normalize match");
-    TEST_ASSERT(contactExistsByEmailCI("test_contacts.csv", "tom@mail.com"), "A6: email case-insensitive match");
-
-    TEST_ASSERT(validateEmail("test@example.com") == 1, "A7: validateEmail ok");
-    TEST_ASSERT(validateEmail("invalid.email") == 0,      "A8: validateEmail fail");
-    TEST_ASSERT(validatePhone("081-234-5678") == 1,       "A9: validatePhone ok");
-    TEST_ASSERT(validatePhone("abc-def-ghij") == 0,       "A10: validatePhone fail");
-
-    char input1[64] = "   =malicious \t";
-    sanitizeInput(input1);
-    TEST_ASSERT(strcmp(input1, "=malicious") == 0, "A11: sanitize keeps symbols, trims whitespace");
-
-    // Group B: Delete
-    printf("\nGroup B: Delete Functions\n");
-    remove("test_contacts.csv");
-    addContactTestHelper("Google", "John", "081-111-1111", "john@google.com");
-    addContactTestHelper("Microsoft", "Jane", "082-222-2222", "jane@microsoft.com");
-    int deleted = deleteContactTestHelper("GOOGLE");
-    TEST_ASSERT(deleted && !contactExistsByCompanyCI("test_contacts.csv", "Google"), "B1: delete by company (CI)");
-
-    remove("test_contacts.csv");
-    addContactTestHelper("Google", "John", "081-111-1111", "john@google.com");
-    deleted = deleteContactTestHelper("Apple");
-    TEST_ASSERT(!deleted, "B2: delete non-existent company returns false");
-
-    remove("test_contacts.csv");
-    addContactTestHelper("A", "P1", "081-234-5678", "a@a.com");
-    addContactTestHelper("B", "P2", "+66 81 234 5678", "b@b.com");
-    addContactTestHelper("C", "P3", "0812345678", "c@c.com");
-    // delete first matching (by company helper). For phone deletion we test existence after add (A5 already).
-    deleted = deleteContactTestHelper("A");
-    TEST_ASSERT(deleted && countContactsTest("test_contacts.csv") == 2, "B3: delete one among three");
-    TEST_ASSERT(contactExistsByCompanyCI("test_contacts.csv", "B"), "B4: others remain (B)");
-    TEST_ASSERT(contactExistsByCompanyCI("test_contacts.csv", "C"), "B5: others remain (C)");
-
-    // Robustness: many duplicate names; delete should remove first match only
-    remove("test_contacts.csv");
-    addContactTestHelper("DupCo", "A", "090-000-0000", "a@d.com");
-    addContactTestHelper("DupCo", "B", "090-111-1111", "b@d.com");
-    addContactTestHelper("DupCo", "C", "090-222-2222", "c@d.com");
-    deleted = deleteContactTestHelper("DupCo");
-    TEST_ASSERT(deleted && countContactsTest("test_contacts.csv") == 2, "B6: duplicates - delete first only");
-    TEST_ASSERT(contactExistsByCompanyCI("test_contacts.csv", "DupCo"), "B7: still has remaining duplicates");
-
-    // Summary
-    printf("\n========================================\n");
-    printf("  TEST SUMMARY\n");
-    printf("========================================\n");
-    printf("Passed: %d\n", test_passed);
-    printf("Failed: %d\n", test_failed);
-    printf("Total:  %d\n", test_passed + test_failed);
-    if (test_passed + test_failed > 0) {
-        printf("Success Rate: %.1f%%\n", (test_passed * 100.0) / (test_passed + test_failed));
-    }
-    printf("========================================\n");
-
-    // Cleanup test artifacts
-    remove("test_contacts.csv");
-    remove("test_contacts.tmp");
-}
 // ===== E2E helpers (file = contacts.csv) =====
 static int saveRowToFile(const char* filename,
                          const char* company, const char* person,
@@ -1242,7 +968,8 @@ void runE2ETests() {
         if (rename(getContactsFile(), __bak_path) != 0) {
             FILE *rf = fopen(getContactsFile(), "r"); FILE *wf = rf ? fopen(__bak_path, "w") : NULL;
             if (rf && wf) { char buf[4096]; size_t n; while ((n = fread(buf,1,sizeof(buf),rf))>0) fwrite(buf,1,n,wf); }
-            if (rf) fclose(rf); if (wf) fclose(wf);
+            if (rf) fclose(rf);
+            if (wf) fclose(wf);
         }
     }
     { FILE *init = fopen(getContactsFile(), "w"); if (init) fclose(init); }
