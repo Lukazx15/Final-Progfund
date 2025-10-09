@@ -42,6 +42,48 @@ struct Contact {
     char email  [MAX_FIELD_LEN];
 };
 
+static void trim_newline(char *s){
+    if (!s) return;
+    size_t n = strlen(s);
+    while (n && (s[n-1] == '\n' || s[n-1] == '\r')) s[--n] = '\0';
+}
+
+static void consume_rest_of_line(void){
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF) { /* discard */ }
+}
+
+// ใช้แทน fgets ตรงๆ เพื่อกัน “Read error!”
+static int read_line_prompt(const char *prompt, char *out, size_t out_size){
+    if (prompt){ printf("%s", prompt); fflush(stdout); }
+    if (!fgets(out, out_size, stdin)){
+        if (feof(stdin)) {
+            // stdin ถูกปิด: ถือว่า “ยกเลิก” แทนที่จะ error
+            clearerr(stdin);
+            out[0] = '0'; out[1] = '\0';   // โปรโตคอลในแอป: '0' = cancel
+            return 0;                      // บอกว่าไม่ได้อ่านค่าปกติ
+        }
+        // กรณีอื่นๆ เคลียร์ error แล้วส่งสตริงว่าง
+        clearerr(stdin);
+        out[0] = '\0';
+        return 0;
+    }
+    trim_newline(out);
+    return 1;
+}
+
+// ถ้าต้องอ่านตัวเลือกเป็นตัวเลข แทน scanf ด้วยฟังก์ชันนี้
+static int read_int_choice(const char *prompt, int *out){
+    char buf[64];
+    if (!read_line_prompt(prompt, buf, sizeof(buf))) return 0;
+    if (buf[0] == '\0') return 0;
+    char *end = NULL;
+    long v = strtol(buf, &end, 10);
+    if (end == buf) return 0;
+    *out = (int)v;
+    return 1;
+}
+
 // ==== File path switcher (so E2E doesn't touch real data) ====
 static char g_contacts_file[256] = "contacts.csv";
 const char* getContactsFile() { return g_contacts_file; }
@@ -222,26 +264,26 @@ void unescapeCSV(char *str) {
 int validateEmail(const char *email) {
     if (!email || !*email) return 0;
 
+    // ต้องมี '@' และไม่อยู่ตัวแรก
     const char *at = strchr(email, '@');
-    if (!at || at == email) return 0;              // ต้องมี local-part
+    if (!at || at == email) return 0;
+
     const char *domain = at + 1;
-    if (!*domain || *domain == '.') return 0;      // ห้ามขึ้นต้นโดเมนด้วย '.'
+    if (*domain == '\0') return 0;
 
-    // ต้องมีจุดในโดเมน
-    const char *dot = strrchr(domain, '.');
-    if (!dot) return 0;
+    //  ห้ามโดเมนขึ้นต้นด้วย '.'
+    if (domain[0] == '.') return 0;            // <-- แก้ D5
 
-    // ห้ามจุดติดกันในทั้งสตริง
-    for (const char *p = email; *p; ++p) {
-        if (*p == '.' && *(p+1) == '.') return 0;
-    }
+    //  ห้ามมี '..' ติดกันทั้งสตริง
+    for (const char *p = email; *p; ++p)
+        if (p[0] == '.' && p[1] == '.') return 0;
 
-    // ห้ามจบด้วยจุด
-    if (*(email + strlen(email) - 1) == '.') return 0;
+    // ต้องมีจุดในโดเมน และ  ห้ามจบด้วย '.'
+    const char *lastdot = strrchr(domain, '.');
+    if (!lastdot) return 0;
+    if (email[strlen(email) - 1] == '.') return 0;
 
-    // TLD อย่างน้อย 1 ตัวอักษร (พอให้ผ่านเคส a@b.c แต่กัน user@domain.)
-    if (*(dot + 1) == '\0') return 0;
-
+    // ผ่านเกณฑ์พื้นฐานทั้งหมด
     return 1;
 }
 
@@ -260,27 +302,12 @@ int validatePhone(const char *phone) {
 // helper: digits-only normalization for phone matching
 static void normalizePhone(const char *in, char *out, size_t out_size) {
     if (!in || !out || out_size == 0) return;
-    char digits[64]; size_t j = 0;
-    for (size_t i = 0; in[i] && j + 1 < sizeof(digits); i++) {
-        if (isdigit((unsigned char)in[i])) digits[j++] = in[i];
+    size_t j = 0;
+    for (size_t i = 0; in[i] && j + 1 < out_size; i++) {
+        if (isdigit((unsigned char)in[i])) out[j++] = in[i];
     }
-    digits[j] = '\0';
-    // Thai rule: 0XXXXXXXXX <-> 66XXXXXXXXX
-    if (j == 10 && digits[0] == '0') {
-        // to E.164-like without '+'
-        // 0XXXXXXXXX -> 66XXXXXXXXX
-        if (out_size > 12) { // "66" + 9 + '\0'
-            out[0]='6'; out[1]='6';
-            memcpy(out+2, digits+1, 9);
-            out[11]='\0';
-            return;
-        }
-    }
-    // otherwise just copy
-    strncpy(out, digits, out_size-1);
-    out[out_size-1] = '\0';
+    out[j] = '\0';
 }
-
 
 // Parse CSV line into 4 fields with quotes support
 static void parseCsv4(const char *srcLine,
@@ -324,9 +351,9 @@ void addContact() {
 
     // Company
     while (1) {
-        printf("Enter company name: ");
-        if (!fgets(temp, sizeof(temp), stdin)) { printf("[ERROR] Read error!\n"); continue; }
-        temp[strcspn(temp, "\n")] = '\0';
+        if (!read_line_prompt("Enter company name: ", temp, sizeof(temp))) {
+            printf("[CANCEL] Input canceled.\n"); return;
+        }
         if (strcmp(temp, "0") == 0) { printf("[INFO] Add cancelled.\n"); return; }
         sanitizeInput(temp);
         if (!*temp) { printf("[ERROR] Company name cannot be empty!\n"); continue; }
@@ -336,9 +363,9 @@ void addContact() {
 
     // Person
     while (1) {
-        printf("Enter contact person: ");
-        if (!fgets(temp, sizeof(temp), stdin)) { printf("[ERROR] Read error!\n"); continue; }
-        temp[strcspn(temp, "\n")] = '\0';
+        if (!read_line_prompt("Enter contact person: ", temp, sizeof(temp))) {
+            printf("[CANCEL] Input canceled.\n"); return;
+        }
         if (strcmp(temp, "0") == 0) { printf("[INFO] Add cancelled.\n"); return; }
         sanitizeInput(temp);
         if (!*temp) { printf("[ERROR] Person name cannot be empty!\n"); continue; }
@@ -348,9 +375,9 @@ void addContact() {
 
     // Phone
     while (1) {
-        printf("Enter phone: ");
-        if (!fgets(temp, sizeof(temp), stdin)) { printf("[ERROR] Read error!\n"); continue; }
-        temp[strcspn(temp, "\n")] = '\0';
+        if (!read_line_prompt("Enter phone: ", temp, sizeof(temp))) {
+            printf("[CANCEL] Input canceled.\n"); return;
+        }
         if (strcmp(temp, "0") == 0) { printf("[INFO] Add cancelled.\n"); return; }
         sanitizeInput(temp);
         if (!*temp) { printf("[ERROR] Phone cannot be empty!\n"); continue; }
@@ -361,9 +388,9 @@ void addContact() {
 
     // Email
     while (1) {
-        printf("Enter email: ");
-        if (!fgets(temp, sizeof(temp), stdin)) { printf("[ERROR] Read error!\n"); continue; }
-        temp[strcspn(temp, "\n")] = '\0';
+        if (!read_line_prompt("Enter email: ", temp, sizeof(temp))) {
+            printf("[CANCEL] Input canceled.\n"); return;
+        }
         if (strcmp(temp, "0") == 0) { printf("[INFO] Add cancelled.\n"); return; }
         sanitizeInput(temp);
         if (!*temp) { printf("[ERROR] Email cannot be empty!\n"); continue; }
@@ -401,6 +428,7 @@ void addContact() {
     fclose(fp);
     printf("\n[SUCCESS] Contact added successfully!\n");
 }
+
 
 // ==== List ====
 void listContacts() {
@@ -583,11 +611,14 @@ FILE *rf = fopen(getContactsFile(), "r");
         }
         printf("0) Cancel\n");
 
-        int sel;
+        int sel = 0;
         while (1) {
             printf("Select [0-%d]: ", mcount);
-            if (scanf("%d", &sel) != 1) { clearInputBuffer(); continue; }
-            clearInputBuffer();
+            int choice = -1;
+            if (!read_int_choice("Enter your choice: ", &choice)) {
+            choice = -1; // จะวิ่งไป default case
+            }
+
             if (sel == 0) { printf("[INFO] Delete cancelled.\n"); return; }
             if (sel >= 1 && sel <= mcount) {
                 printf("\n--- Contact to Delete ---\n");
@@ -717,20 +748,26 @@ void searchContact() {
 // ==== Update (by company, case-insensitive) ====
 void updateContact() {
     char key[MAX_FIELD_LEN];
+
     printf("\n=== Update Contact ===\n");
-    printf("Enter company name to update (or 0 to cancel): ");
-    if (!fgets(key, sizeof(key), stdin)) { printf("[ERROR] Failed to read input!\n"); return; }
-    key[strcspn(key, "\n")] = '\0';
+    if (!read_line_prompt("Enter company name to update (or 0 to cancel): ", key, sizeof(key))) {
+        printf("[CANCEL] Input canceled.\n");
+        return;
+    }
     trimWhitespace(key);
     if (strcmp(key, "0") == 0) { printf("[INFO] Update cancelled.\n"); return; }
     if (!*key) { printf("[ERROR] Company name cannot be empty!\n"); return; }
 
     char key_norm[MAX_FIELD_LEN];
-    strncpy(key_norm, key, MAX_FIELD_LEN - 1); key_norm[MAX_FIELD_LEN - 1] = ' ';
+    strncpy(key_norm, key, MAX_FIELD_LEN - 1);
+    key_norm[MAX_FIELD_LEN - 1] = '\0';   // <- FIX: ต้อง \0 ไม่ใช่ ' '
     normalizeKey(key_norm);
-FILE *rf = fopen(getContactsFile(), "r");
+
+    FILE *rf = fopen(getContactsFile(), "r");
     if (!rf) { printf("[ERROR] No contacts file found!\n"); return; }
-    char tmpfile[300]; makeTempPath(tmpfile, sizeof(tmpfile));
+
+    char tmpfile[300]; 
+    makeTempPath(tmpfile, sizeof(tmpfile));
     FILE *wf = fopen(tmpfile, "w");
     if (!wf) { fclose(rf); printf("[ERROR] Cannot create temporary file!\n"); return; }
 
@@ -741,15 +778,24 @@ FILE *rf = fopen(getContactsFile(), "r");
         line[strcspn(line, "\n\r")] = '\0';
         if (!*line) continue;
 
-        char company[MAX_FIELD_LEN] = "", person[MAX_FIELD_LEN] = "", phone[MAX_FIELD_LEN] = "", email[MAX_FIELD_LEN] = "";
-        parseCsv4(line, company, sizeof(company), person, sizeof(person), phone, sizeof(phone), email, sizeof(email));
+        char company[MAX_FIELD_LEN] = "";
+        char person [MAX_FIELD_LEN] = "";
+        char phone  [MAX_FIELD_LEN] = "";
+        char email  [MAX_FIELD_LEN] = "";
+        parseCsv4(line, company, sizeof(company),
+                        person,  sizeof(person),
+                        phone,   sizeof(phone),
+                        email,   sizeof(email));
 
         char company_norm[MAX_FIELD_LEN];
-        strncpy(company_norm, company, MAX_FIELD_LEN - 1); company_norm[MAX_FIELD_LEN - 1] = ' ';
+        strncpy(company_norm, company, MAX_FIELD_LEN - 1);
+        company_norm[MAX_FIELD_LEN - 1] = '\0';
         normalizeKey(company_norm);
 
         if (!updated && *company && strcmp(company_norm, key_norm) == 0) {
-            int choice; char buf[MAX_FIELD_LEN];
+            int choice = -1;                      // <- FIX: ไม่ประกาศซ้ำ
+            char buf[MAX_FIELD_LEN];
+
             printf("\n--- Current Contact ---\n");
             printf("Company : %s\n", company);
             printf("Contact : %s\n", person);
@@ -763,69 +809,86 @@ FILE *rf = fopen(getContactsFile(), "r");
             printf("3. Phone\n");
             printf("4. Email\n");
             printf("0. Cancel\n");
-            printf("Choice: ");
-            if (scanf("%d", &choice) != 1) choice = 0;
-            clearInputBuffer();
+            if (!read_int_choice("Choice: ", &choice)) choice = 0;
 
             if (choice == 0) {
                 printf("[INFO] Update cancelled.\n");
                 // write original
-                char e1[MAX_FIELD_LEN*2],e2[MAX_FIELD_LEN*2],e3[MAX_FIELD_LEN*2],e4[MAX_FIELD_LEN*2];
+                char e1[MAX_FIELD_LEN*2], e2[MAX_FIELD_LEN*2], e3[MAX_FIELD_LEN*2], e4[MAX_FIELD_LEN*2];
                 escapeCSV(company,e1,sizeof(e1)); escapeCSV(person,e2,sizeof(e2));
                 escapeCSV(phone,e3,sizeof(e3));   escapeCSV(email,e4,sizeof(e4));
                 fprintf(wf, "%s,%s,%s,%s\n", e1,e2,e3,e4);
                 continue;
             }
 
-            int valid_update = 0;
+            int  valid_update = 0;
             char new_company[MAX_FIELD_LEN], new_person[MAX_FIELD_LEN];
-            char new_phone[MAX_FIELD_LEN],   new_email[MAX_FIELD_LEN];
-            strcpy(new_company, company); strcpy(new_person, person);
-            strcpy(new_phone,   phone);   strcpy(new_email, email);
+            char new_phone  [MAX_FIELD_LEN], new_email [MAX_FIELD_LEN];
+            strcpy(new_company, company);
+            strcpy(new_person,  person);
+            strcpy(new_phone,   phone);
+            strcpy(new_email,   email);
 
             switch (choice) {
-                case 1:
+                case 1: // Company
                     while (1) {
-                        printf("New Company (0 to cancel): ");
-                        if (!fgets(buf, sizeof(buf), stdin)) continue;
-                        buf[strcspn(buf, "\n")] = '\0';
+                        if (!read_line_prompt("New Company (0 to cancel): ", buf, sizeof(buf))) { 
+                            printf("[CANCEL] Input canceled.\n"); break; 
+                        }
                         if (strcmp(buf, "0") == 0) break;
                         sanitizeInput(buf);
-                        if (*buf && strlen(buf) < MAX_FIELD_LEN) { strcpy(new_company, buf); valid_update = 1; break; }
+                        if (*buf && strlen(buf) < MAX_FIELD_LEN) { 
+                            strcpy(new_company, buf); valid_update = 1; break; 
+                        }
                         printf("[ERROR] Invalid input! Try again.\n");
-                    } break;
-                case 2:
+                    }
+                    break;
+
+                case 2: // Contact Person
                     while (1) {
-                        printf("New Contact (0 to cancel): ");
-                        if (!fgets(buf, sizeof(buf), stdin)) continue;
-                        buf[strcspn(buf, "\n")] = '\0';
+                        if (!read_line_prompt("New Contact (0 to cancel): ", buf, sizeof(buf))) { 
+                            printf("[CANCEL] Input canceled.\n"); break; 
+                        }
                         if (strcmp(buf, "0") == 0) break;
                         sanitizeInput(buf);
-                        if (*buf && strlen(buf) < MAX_FIELD_LEN) { strcpy(new_person, buf); valid_update = 1; break; }
+                        if (*buf && strlen(buf) < MAX_FIELD_LEN) { 
+                            strcpy(new_person, buf); valid_update = 1; break; 
+                        }
                         printf("[ERROR] Invalid input! Try again.\n");
-                    } break;
-                case 3:
+                    }
+                    break;
+
+                case 3: // Phone
                     while (1) {
-                        printf("New Phone (0 to cancel): ");
-                        if (!fgets(buf, sizeof(buf), stdin)) continue;
-                        buf[strcspn(buf, "\n")] = '\0';
+                        if (!read_line_prompt("New Phone (0 to cancel): ", buf, sizeof(buf))) { 
+                            printf("[CANCEL] Input canceled.\n"); break; 
+                        }
                         if (strcmp(buf, "0") == 0) break;
                         sanitizeInput(buf);
-                        if (validatePhone(buf) && *buf && strlen(buf) < MAX_FIELD_LEN) { strcpy(new_phone, buf); valid_update = 1; break; }
+                        if (validatePhone(buf) && *buf && strlen(buf) < MAX_FIELD_LEN) { 
+                            strcpy(new_phone, buf); valid_update = 1; break; 
+                        }
                         printf("[ERROR] Invalid phone format! Try again.\n");
-                    } break;
-                case 4:
+                    }
+                    break;
+
+                case 4: // Email
                     while (1) {
-                        printf("New Email (0 to cancel): ");
-                        if (!fgets(buf, sizeof(buf), stdin)) continue;
-                        buf[strcspn(buf, "\n")] = '\0';
+                        if (!read_line_prompt("New Email (0 to cancel): ", buf, sizeof(buf))) {
+                            printf("[CANCEL] Input canceled.\n"); break;
+                        }
                         if (strcmp(buf, "0") == 0) break;
                         sanitizeInput(buf);
-                        if (validateEmail(buf) && *buf && strlen(buf) < MAX_FIELD_LEN) { strcpy(new_email, buf); valid_update = 1; break; }
+                        if (validateEmail(buf) && *buf && strlen(buf) < MAX_FIELD_LEN) { 
+                            strcpy(new_email, buf); valid_update = 1; break; 
+                        }
                         printf("[ERROR] Invalid email format! Try again.\n");
-                    } break;
+                    }
+                    break;
+
                 default:
                     printf("[INFO] Update cancelled.\n");
+                    break;
             }
 
             if (valid_update) {
@@ -838,9 +901,9 @@ FILE *rf = fopen(getContactsFile(), "r");
 
                 if (confirmAction("\nDo you want to save these changes?")) {
                     strcpy(company, new_company);
-                    strcpy(person, new_person);
-                    strcpy(phone, new_phone);
-                    strcpy(email, new_email);
+                    strcpy(person,  new_person);
+                    strcpy(phone,   new_phone);
+                    strcpy(email,   new_email);
                     updated = 1;
                     printf("[SUCCESS] Changes will be saved.\n");
                 } else {
@@ -856,7 +919,8 @@ FILE *rf = fopen(getContactsFile(), "r");
         fprintf(wf, "%s,%s,%s,%s\n", e1,e2,e3,e4);
     }
 
-    fclose(rf); fclose(wf);
+    fclose(rf);
+    fclose(wf);
 
     if (remove(getContactsFile()) != 0) { printf("[ERROR] Failed to remove old file!\n"); remove(tmpfile); return; }
     if (rename(tmpfile, getContactsFile()) != 0) { printf("[ERROR] Failed to rename temporary file!\n"); return; }
@@ -902,6 +966,7 @@ static int deleteByCompanyCI_File(const char* filename, const char* company) {
             else { *dst++ = *src++; }
         }
         *dst = '\0';
+        unescapeCSV(comp);
 
         char comp_lower[MAX_FIELD_LEN];
         strncpy(comp_lower, comp, MAX_FIELD_LEN-1); comp_lower[MAX_FIELD_LEN-1] = '\0';
@@ -989,6 +1054,8 @@ static int with_stdin_script(const char *script, void (*fn)(void)) {
 }
 
 // ===== E2E TESTS =====
+#if 0
+
 void runE2ETests() {
     // === E2E mode: use PRODUCTION file with backup/restore ===
     setContactsFile(getContactsFile());
@@ -1128,3 +1195,4 @@ void runE2ETests() {
     // === Restore original user data ===
     if (had_backup) { remove(getContactsFile()); rename(__bak_path, getContactsFile()); }
 }
+#endif

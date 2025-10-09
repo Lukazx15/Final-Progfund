@@ -1,16 +1,8 @@
-// ===============================================
-//  Unit_test.c  —  Consolidated & Structured A–H
-//  Covers: addContact / listContacts / searchContact
-//          updateContact / deleteContact
-//  Plus: CSV escaping/unescaping, email/phone validation,
-//        existence checks, file boundary cases
-// ===============================================
-
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include "test.h"   // prototypes: runUnitTests, countContactsTest, contactExistsBy* ...
+#include "test.h"
 
 // ===== extern (from main.c) =====
 extern void addContact(void);
