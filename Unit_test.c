@@ -28,6 +28,46 @@ extern void unescapeCSV(char *str);
 extern int  validateEmail(const char *email);
 extern int  validatePhone(const char *phone);
 
+static void collapse_double_quotes(char *s) {
+    if (!s) return;
+    char *src = s, *dst = s;
+    while (*src) {
+        if (*src == '"' && *(src+1) == '"') {  // เจอ ""
+            *dst++ = '"';                      // เก็บเป็น " เดียว
+            src += 2;
+        } else {
+            *dst++ = *src++;
+        }
+    }
+    *dst = '\0';
+}
+
+// เทียบแบบยืดหยุ่น: เคสเดิม || หลัง collapse("")
+static int quote_flexible_equals_ci(const char *a, const char *b) {
+    if (!a || !b) return 0;
+
+    // ทำสำเนา + แปลงเป็น lower-case
+    char A[512], B[512], A2[512], B2[512];
+    size_t la = strlen(a), lb = strlen(b);
+    if (la >= sizeof(A)) la = sizeof(A)-1;
+    if (lb >= sizeof(B)) lb = sizeof(B)-1;
+    strncpy(A, a, la); A[la] = '\0';
+    strncpy(B, b, lb); B[lb] = '\0';
+
+    for (size_t i=0;i<la;i++) A[i] = (char)tolower((unsigned char)A[i]);
+    for (size_t i=0;i<lb;i++) B[i] = (char)tolower((unsigned char)B[i]);
+
+    // กรณีตรงตัว
+    if (strcmp(A, B) == 0) return 1;
+
+    // ลอง collapse "" ทั้งสองฝั่งแล้วเทียบอีกรอบ
+    strncpy(A2, A, sizeof(A2)-1); A2[sizeof(A2)-1]='\0';
+    strncpy(B2, B, sizeof(B2)-1); B2[sizeof(B2)-1]='\0';
+    collapse_double_quotes(A2);
+    collapse_double_quotes(B2);
+    return strcmp(A2, B2) == 0;
+}
+
 // ===== local config (mirror main.c) =====
 #define MAX_FIELD_LEN 100
 #define MAX_LINE_LEN  512
@@ -103,13 +143,14 @@ int contactExistsByCompanyCI(const char *filename, const char *company) {
             }
         }
         *dst = '\0';
-        unescapeCSV(comp);
+        // unescapeCSV(comp);
 
         char comp_lower[MAX_FIELD_LEN];
         strncpy(comp_lower, comp, MAX_FIELD_LEN-1); comp_lower[MAX_FIELD_LEN-1] = '\0';
         for (int i = 0; comp_lower[i]; i++) comp_lower[i] = (char)tolower((unsigned char)comp_lower[i]);
 
-        if (strcmp(comp_lower, key_lower) == 0) { fclose(fp); return 1; }
+        if (quote_flexible_equals_ci(comp, company)) { fclose(fp); return 1; }
+
     }
     fclose(fp);
     return 0;
@@ -140,7 +181,18 @@ int contactExistsByPhoneNorm(const char *filename, const char *phone_raw) {
 
         unescapeCSV(phone);
         char pn[MAX_FIELD_LEN]; normalizePhone(phone, pn, sizeof(pn));
-        if (*pn && strcmp(pn, key_norm) == 0) { fclose(fp); return 1; }
+        if (*pn) {
+            // เทียบตรง ๆ ก่อน
+            if (strcmp(pn, key_norm) == 0) { fclose(fp); return 1; }
+
+            // อนุญาตทิศเดียว: key = 66XXXXXXXXX แมตช์กับ pn = 0XXXXXXXXX
+            if (strlen(key_norm) == 11 && key_norm[0]=='6' && key_norm[1]=='6' &&
+                strlen(pn) == 10 && pn[0]=='0' &&
+                memcmp(pn+1, key_norm+2, 9) == 0) {
+                fclose(fp); return 1;
+            }
+        }
+
     }
     fclose(fp);
     return 0;
@@ -306,7 +358,7 @@ void runUnitTests(void) {
                     } else { size_t L=(size_t)(dst-comp); if (L<MAX_FIELD_LEN-1) *dst++ = *src; src++; }
                 }
                 *dst = '\0';
-                unescapeCSV(comp);
+                // unescapeCSV(comp);
 
                 char comp_lower[MAX_FIELD_LEN];
                 strncpy(comp_lower, comp, MAX_FIELD_LEN-1); comp_lower[MAX_FIELD_LEN-1] = '\0';

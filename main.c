@@ -221,10 +221,30 @@ void unescapeCSV(char *str) {
 
 int validateEmail(const char *email) {
     if (!email || !*email) return 0;
+
     const char *at = strchr(email, '@');
-    const char *dot = strrchr(email, '.');
-    return (at && dot && at < dot && at > email && dot < email + strlen(email) - 1);
+    if (!at || at == email) return 0;              // ต้องมี local-part
+    const char *domain = at + 1;
+    if (!*domain || *domain == '.') return 0;      // ห้ามขึ้นต้นโดเมนด้วย '.'
+
+    // ต้องมีจุดในโดเมน
+    const char *dot = strrchr(domain, '.');
+    if (!dot) return 0;
+
+    // ห้ามจุดติดกันในทั้งสตริง
+    for (const char *p = email; *p; ++p) {
+        if (*p == '.' && *(p+1) == '.') return 0;
+    }
+
+    // ห้ามจบด้วยจุด
+    if (*(email + strlen(email) - 1) == '.') return 0;
+
+    // TLD อย่างน้อย 1 ตัวอักษร (พอให้ผ่านเคส a@b.c แต่กัน user@domain.)
+    if (*(dot + 1) == '\0') return 0;
+
+    return 1;
 }
+
 
 int validatePhone(const char *phone) {
     if (!phone || !*phone) return 0;
@@ -240,12 +260,27 @@ int validatePhone(const char *phone) {
 // helper: digits-only normalization for phone matching
 static void normalizePhone(const char *in, char *out, size_t out_size) {
     if (!in || !out || out_size == 0) return;
-    size_t j = 0;
-    for (size_t i = 0; in[i] && j + 1 < out_size; i++) {
-        if (isdigit((unsigned char)in[i])) out[j++] = in[i];
+    char digits[64]; size_t j = 0;
+    for (size_t i = 0; in[i] && j + 1 < sizeof(digits); i++) {
+        if (isdigit((unsigned char)in[i])) digits[j++] = in[i];
     }
-    out[j] = '\0';
+    digits[j] = '\0';
+    // Thai rule: 0XXXXXXXXX <-> 66XXXXXXXXX
+    if (j == 10 && digits[0] == '0') {
+        // to E.164-like without '+'
+        // 0XXXXXXXXX -> 66XXXXXXXXX
+        if (out_size > 12) { // "66" + 9 + '\0'
+            out[0]='6'; out[1]='6';
+            memcpy(out+2, digits+1, 9);
+            out[11]='\0';
+            return;
+        }
+    }
+    // otherwise just copy
+    strncpy(out, digits, out_size-1);
+    out[out_size-1] = '\0';
 }
+
 
 // Parse CSV line into 4 fields with quotes support
 static void parseCsv4(const char *srcLine,
@@ -867,7 +902,6 @@ static int deleteByCompanyCI_File(const char* filename, const char* company) {
             else { *dst++ = *src++; }
         }
         *dst = '\0';
-        unescapeCSV(comp);
 
         char comp_lower[MAX_FIELD_LEN];
         strncpy(comp_lower, comp, MAX_FIELD_LEN-1); comp_lower[MAX_FIELD_LEN-1] = '\0';
