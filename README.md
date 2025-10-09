@@ -3,9 +3,8 @@
  โครงการนี้พัฒนาด้วยภาษา C และมีไฟล์ต้นฉบับหลักคือ `main.c` หากต้องการคอมไพล์และรันโปรแกรม สามารถทำตามขั้นตอนต่อไปนี้ได้ (ทดสอบด้วย GCC บนระบบลินุกซ์ และยกตัวอย่างสำหรับ Windows):
  
  1. **คอมไพล์**
-    ```bash
-
-   gcc -Wall -Wextra -Wno-unused-function -O2 main.c Unit_test.c E2E_test.c -o contact_app
+    ```
+    bashgcc -Wall -Wextra -Wno-unused-function -O2 main.c Unit_test.c E2E_test.c -o contact_app
     ```
    คำสั่งด้านบนจะคอมไพล์ไฟล์ `main.c` พร้อมกับไฟล์ทดสอบ `Unit_test.c` และ `E2E_test.c` และสร้างไฟล์ปฏิบัติการชื่อ `contact_app` ในไดเรกทอรีเดียวกัน
  
@@ -27,8 +26,7 @@
  
  1. **คอมไพล์**
     ```powershell
-
-   gcc -Wall -Wextra -Wno-unused-function -O2 main.c Unit_test.c E2E_test.c -o contact_app.exe
+    gcc -Wall -Wextra -Wno-unused-function -O2 main.c Unit_test.c E2E_test.c -o contact_app.exe
     ```
    คำสั่งนี้จะสร้างไฟล์ปฏิบัติการ `contact_app.exe`
  
